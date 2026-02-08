@@ -26,4 +26,6 @@ dependencies = [
     "structlog>=25.4.0",
     "python-ulid>=3.0.0",
     "uvicorn>=0.37.0",
+    "google-generativeai>=0.8.6",
+    "python-multipart>=0.0.22",
 ]

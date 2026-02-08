@@ -12,6 +12,13 @@ from src.dtos.user_dto import (
     RefreshTokenDTO,
     AuthenticatedUserDTO,
 )
+from src.dtos.ai_detection_dto import (
+    DetectionSource,
+    DetectionResult,
+    TextExtractionDTO,
+    AIDetectionRequestDTO,
+    AIDetectionResultDTO,
+)
 
 __all__ = [
     "UserRegisterDTO",
@@ -20,4 +27,9 @@ __all__ = [
     "TokenDTO",
     "RefreshTokenDTO",
     "AuthenticatedUserDTO",
+    "DetectionSource",
+    "DetectionResult",
+    "TextExtractionDTO",
+    "AIDetectionRequestDTO",
+    "AIDetectionResultDTO",
 ]

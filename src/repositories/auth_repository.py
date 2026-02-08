@@ -6,8 +6,7 @@ This repository handles database queries related to authentication.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from time import timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select

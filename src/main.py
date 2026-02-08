@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.api.v1.auth import router as auth_router
+from src.api.v1.ai_detection import router as ai_detection_router
 from src.core.config import config, Config
 from src.core.logging import get_logger, setup_logging
 from src.db.database import check_db_connection
@@ -140,3 +141,4 @@ app.include_router(health_router)
 
 
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
+app.include_router(ai_detection_router, prefix="/api/v1", tags=["AI Detection"])
