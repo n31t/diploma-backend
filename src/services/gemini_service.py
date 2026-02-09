@@ -65,9 +65,17 @@ class GeminiTextExtractor:
             # Extract text using Gemini
             extraction_prompt = """
             Extract all text content from this document. 
-            Return only the extracted text without any additional commentary or formatting.
-            Preserve the original structure and organization of the text as much as possible.
-            If the document contains tables, preserve them in a readable format.
+            
+            Rules:
+                - Return ONLY plain text.
+                - Do NOT include tables, table formatting, columns, bullet points, or markdown.
+                - Do NOT describe layout or structure.
+                - Do NOT add explanations, comments, or headings.
+                - Output must be a continuous text suitable for machine learning input.
+                - If no readable text is present, return an empty string.
+                - Preserve the original structure and organization of the text as much as possible.
+                
+            Return only the extracted text.
             """
 
             response = self.model.generate_content(

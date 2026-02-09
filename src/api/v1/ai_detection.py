@@ -9,7 +9,7 @@ from typing import Annotated
 
 from dishka import FromDishka
 from dishka.integrations.fastapi import DishkaRoute
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
 
 from src.api.v1.schemas.ai_detection import (
     AIDetectionResponse,
@@ -18,8 +18,10 @@ from src.api.v1.schemas.ai_detection import (
     TextDetectionRequest,
 )
 from src.core.logging import get_logger
+from src.dtos import AuthenticatedUserDTO
 from src.dtos.ai_detection_dto import DetectionResult, DetectionSource
 from src.services.ai_detection_service import AIDetectionService
+from src.services.shared.auth_helpers import get_authenticated_user_dependency
 
 logger = get_logger(__name__)
 
@@ -59,6 +61,7 @@ def _map_detection_source_to_schema(source: DetectionSource) -> DetectionSourceS
 async def detect_from_text(
     request: TextDetectionRequest,
     service: FromDishka[AIDetectionService],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
 ):
     """
     Detect if provided text is AI-generated or human-written.
@@ -83,7 +86,9 @@ async def detect_from_text(
     try:
         logger.info(
             "detect_text_request",
-            text_length=len(request.text)
+            text_length=len(request.text),
+            user_id=current_user.id,
+            username=current_user.username
         )
 
         # Detect AI text
@@ -102,7 +107,8 @@ async def detect_from_text(
         logger.info(
             "detect_text_success",
             result=result_dto.result.value,
-            confidence=result_dto.confidence
+            confidence=result_dto.confidence,
+            user_id=current_user.id
         )
 
         return response
@@ -110,7 +116,8 @@ async def detect_from_text(
     except ValueError as e:
         logger.warning(
             "detect_text_validation_error",
-            error=str(e)
+            error=str(e),
+            user_id=current_user.id
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -121,6 +128,7 @@ async def detect_from_text(
             "detect_text_failed",
             error=str(e),
             error_type=type(e).__name__,
+            user_id=current_user.id,
             exc_info=True
         )
         raise HTTPException(
@@ -139,6 +147,7 @@ async def detect_from_text(
 async def detect_from_file(
     file: Annotated[UploadFile, File(description="File to analyze (PDF, DOCX, DOC, TXT)")],
     service: FromDishka[AIDetectionService],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
 ):
     """
     Detect if text in uploaded file is AI-generated or human-written.
@@ -170,7 +179,9 @@ async def detect_from_file(
         logger.info(
             "detect_file_request",
             file_name=file.filename,
-            content_type=file.content_type
+            content_type=file.content_type,
+            user_id=current_user.id,
+            username=current_user.username
         )
 
         # Read file content
@@ -200,7 +211,8 @@ async def detect_from_file(
             "detect_file_success",
             file_name=file.filename,
             result=result_dto.result.value,
-            confidence=result_dto.confidence
+            confidence=result_dto.confidence,
+            user_id=current_user.id
         )
 
         return response
@@ -209,7 +221,8 @@ async def detect_from_file(
         logger.warning(
             "detect_file_validation_error",
             file_name=file.filename,
-            error=str(e)
+            error=str(e),
+            user_id=current_user.id
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -221,6 +234,7 @@ async def detect_from_file(
             file_name=file.filename,
             error=str(e),
             error_type=type(e).__name__,
+            user_id=current_user.id,
             exc_info=True
         )
         raise HTTPException(
