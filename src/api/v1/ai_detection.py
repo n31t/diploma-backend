@@ -215,7 +215,7 @@ async def detect_from_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
-    except Exception as e:
+    except RuntimeError as e:
         logger.error(
             "detect_file_failed",
             file_name=file.filename,
@@ -224,8 +224,8 @@ async def detect_from_file(
             exc_info=True
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to detect AI text from file"
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Text extraction service temporarily unavailable"
         )
 
 

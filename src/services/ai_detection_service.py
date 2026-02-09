@@ -170,9 +170,18 @@ class AIDetectionService:
 
             return detection_result
 
+        except ValueError as e:
+            logger.error(
+                "detection_from_file_validation_failed",
+                file_name=file_name,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
+            raise
         except Exception as e:
             logger.error(
-                "detection_from_file_failed",
+                "detection_from_file_external_service_failed",
                 file_name=file_name,
                 error=str(e),
                 error_type=type(e).__name__,

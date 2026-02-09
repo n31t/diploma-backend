@@ -75,8 +75,9 @@ class GeminiTextExtractor:
                 safety_settings=self.safety_settings,
             )
 
-            if not response.text:
-                raise Exception("No text extracted from file")
+            text = self.extract_text_safe(response)
+            if not text or not text.strip():
+                raise ValueError("No readable text found in document")
 
             logger.info(
                 "text_extraction_successful",
@@ -94,7 +95,7 @@ class GeminiTextExtractor:
                 error_type=type(e).__name__,
                 exc_info=True
             )
-            raise Exception(f"Failed to extract text from file: {str(e)}")
+            raise RuntimeError(f"Failed to extract text from file: {str(e)}")
 
         finally:
             # Clean up uploaded file from Gemini
@@ -152,3 +153,17 @@ class GeminiTextExtractor:
                 await asyncio.sleep(retry_delay)
 
         raise Exception(f"File processing timed out after {max_retries * retry_delay} seconds")
+
+    @staticmethod
+    def extract_text_safe(response) -> str | None:
+        if not response.candidates:
+            return None
+
+        parts = response.candidates[0].content.parts
+        texts = [
+            part.text
+            for part in parts
+            if hasattr(part, "text") and part.text.strip()
+        ]
+
+        return "\n".join(texts) if texts else None
