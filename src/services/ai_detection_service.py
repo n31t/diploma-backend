@@ -1,22 +1,20 @@
 """
-AI Detection service layer for business logic.
-
-This service orchestrates text extraction via Gemini and AI detection
-via ML model, handling the complete workflow.
+AI Detection service layer with limits and history tracking.
 """
 
 import os
 import tempfile
+import time
 from typing import Optional
 
 from src.core.gemini_config import gemini_config
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import (
-    AIDetectionRequestDTO,
     AIDetectionResultDTO,
     DetectionSource,
-    TextExtractionDTO,
 )
+from src.dtos.limits_dto import UserLimitDTO
+from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.ml_model_service import AIDetectionModelService
 
@@ -24,37 +22,76 @@ logger = get_logger(__name__)
 
 
 class AIDetectionService:
-    """Service for AI text detection workflow."""
+    """Service for AI text detection with limits and history."""
 
     def __init__(
         self,
         gemini_service: GeminiTextExtractor,
         ml_model_service: AIDetectionModelService,
+        ai_detection_repository: AIDetectionRepository,
     ):
-        """
-        Initialize AI detection service.
-
-        Args:
-            gemini_service: Service for text extraction from files
-            ml_model_service: Service for AI text detection
-        """
         self.gemini_service = gemini_service
         self.ml_model_service = ml_model_service
+        self.ai_detection_repository = ai_detection_repository
 
-    async def detect_from_text(self, text: str) -> AIDetectionResultDTO:
+    async def check_user_limits(self, user_id: str) -> UserLimitDTO:
+        """
+        Check user limits and return limit information.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            UserLimitDTO with limit information
+
+        Raises:
+            ValueError: If user has exceeded limits
+        """
+        can_request, user_limit = await self.ai_detection_repository.can_make_request(user_id)
+
+        limit_dto = UserLimitDTO.from_model(user_limit)
+
+        if not can_request:
+            logger.warning(
+                "user_limit_exceeded",
+                user_id=user_id,
+                daily_used=user_limit.daily_used,
+                daily_limit=user_limit.daily_limit,
+                monthly_used=user_limit.monthly_used,
+                monthly_limit=user_limit.monthly_limit
+            )
+            raise ValueError(
+                f"Request limit exceeded. "
+                f"Daily: {user_limit.daily_used}/{user_limit.daily_limit}, "
+                f"Monthly: {user_limit.monthly_used}/{user_limit.monthly_limit}"
+            )
+
+        return limit_dto
+
+    async def detect_from_text(
+        self,
+        text: str,
+        user_id: str
+    ) -> tuple[AIDetectionResultDTO, UserLimitDTO]:
         """
         Detect AI-generated text from provided text string.
 
         Args:
             text: Text to analyze
+            user_id: User ID
 
         Returns:
-            AIDetectionResultDTO with detection results
+            Tuple of (AIDetectionResultDTO, UserLimitDTO)
 
         Raises:
-            ValueError: If text is invalid
+            ValueError: If text is invalid or limits exceeded
         """
-        logger.info("detecting_from_text", text_length=len(text))
+        start_time = time.time()
+
+        logger.info("detecting_from_text", text_length=len(text), user_id=user_id)
+
+        # Check limits
+        await self.check_user_limits(user_id)
 
         # Validate text
         if not self.ml_model_service.validate_text(text):
@@ -63,6 +100,9 @@ class AIDetectionService:
         try:
             # Run AI detection
             result, confidence = await self.ml_model_service.detect_ai_text(text)
+
+            # Calculate processing time
+            processing_time_ms = int((time.time() - start_time) * 1000)
 
             # Create result DTO
             detection_result = AIDetectionResultDTO(
@@ -74,20 +114,39 @@ class AIDetectionService:
                 metadata={
                     "text_length": len(text),
                     "word_count": len(text.split()),
+                    "processing_time_ms": processing_time_ms,
                 }
+            )
+
+            # Increment usage
+            user_limit = await self.ai_detection_repository.increment_usage(user_id)
+
+            # Save to history
+            await self.ai_detection_repository.create_history_record(
+                user_id=user_id,
+                source="text",
+                result=result.value,
+                confidence=confidence,
+                text_preview=text[:500],
+                text_length=len(text),
+                word_count=len(text.split()),
+                processing_time_ms=processing_time_ms
             )
 
             logger.info(
                 "detection_from_text_complete",
+                user_id=user_id,
                 result=result.value,
-                confidence=confidence
+                confidence=confidence,
+                processing_time_ms=processing_time_ms
             )
 
-            return detection_result
+            return detection_result, UserLimitDTO.from_model(user_limit)
 
         except Exception as e:
             logger.error(
                 "detection_from_text_failed",
+                user_id=user_id,
                 error=str(e),
                 error_type=type(e).__name__,
                 exc_info=True
@@ -99,7 +158,8 @@ class AIDetectionService:
         file_content: bytes,
         file_name: str,
         content_type: str,
-    ) -> AIDetectionResultDTO:
+        user_id: str
+    ) -> tuple[AIDetectionResultDTO, UserLimitDTO]:
         """
         Detect AI-generated text from uploaded file.
 
@@ -107,20 +167,26 @@ class AIDetectionService:
             file_content: File content as bytes
             file_name: Original file name
             content_type: MIME type of the file
+            user_id: User ID
 
         Returns:
-            AIDetectionResultDTO with detection results
+            Tuple of (AIDetectionResultDTO, UserLimitDTO)
 
         Raises:
-            ValueError: If file is invalid
-            Exception: If processing fails
+            ValueError: If file is invalid or limits exceeded
         """
+        start_time = time.time()
+
         logger.info(
             "detecting_from_file",
             file_name=file_name,
             content_type=content_type,
-            file_size=len(file_content)
+            file_size=len(file_content),
+            user_id=user_id
         )
+
+        # Check limits
+        await self.check_user_limits(user_id)
 
         # Validate file
         self._validate_file(file_name, file_content)
@@ -131,7 +197,7 @@ class AIDetectionService:
             temp_path = await self._save_temp_file(file_content, file_name)
 
             # Extract text using Gemini
-            logger.info("extracting_text_from_file", file_name=file_name)
+            logger.info("extracting_text_from_file", file_name=file_name, user_id=user_id)
             extracted_text = await self.gemini_service.extract_text_from_file(
                 temp_path, file_name
             )
@@ -146,6 +212,9 @@ class AIDetectionService:
             # Run AI detection on extracted text
             result, confidence = await self.ml_model_service.detect_ai_text(extracted_text)
 
+            # Calculate processing time
+            processing_time_ms = int((time.time() - start_time) * 1000)
+
             # Create result DTO
             detection_result = AIDetectionResultDTO(
                 result=result,
@@ -158,22 +227,44 @@ class AIDetectionService:
                     "content_type": content_type,
                     "extracted_text_length": len(extracted_text),
                     "word_count": len(extracted_text.split()),
+                    "processing_time_ms": processing_time_ms,
                 }
+            )
+
+            # Increment usage
+            user_limit = await self.ai_detection_repository.increment_usage(user_id)
+
+            # Save to history
+            await self.ai_detection_repository.create_history_record(
+                user_id=user_id,
+                source="file",
+                result=result.value,
+                confidence=confidence,
+                text_preview=extracted_text[:500],
+                text_length=len(extracted_text),
+                word_count=len(extracted_text.split()),
+                file_name=file_name,
+                file_size=len(file_content),
+                content_type=content_type,
+                processing_time_ms=processing_time_ms
             )
 
             logger.info(
                 "detection_from_file_complete",
                 file_name=file_name,
+                user_id=user_id,
                 result=result.value,
-                confidence=confidence
+                confidence=confidence,
+                processing_time_ms=processing_time_ms
             )
 
-            return detection_result
+            return detection_result, UserLimitDTO.from_model(user_limit)
 
         except ValueError as e:
             logger.error(
                 "detection_from_file_validation_failed",
                 file_name=file_name,
+                user_id=user_id,
                 error=str(e),
                 error_type=type(e).__name__,
                 exc_info=True
@@ -181,8 +272,9 @@ class AIDetectionService:
             raise
         except Exception as e:
             logger.error(
-                "detection_from_file_external_service_failed",
+                "detection_from_file_failed",
                 file_name=file_name,
+                user_id=user_id,
                 error=str(e),
                 error_type=type(e).__name__,
                 exc_info=True
@@ -202,18 +294,22 @@ class AIDetectionService:
                         error=str(e)
                     )
 
-    def _validate_file(self, file_name: str, file_content: bytes):
+    async def get_user_limits(self, user_id: str) -> UserLimitDTO:
         """
-        Validate uploaded file.
+        Get user limit information.
 
         Args:
-            file_name: Original file name
-            file_content: File content as bytes
+            user_id: User ID
 
-        Raises:
-            ValueError: If file is invalid
+        Returns:
+            UserLimitDTO with current limits
         """
-        # Check file size
+        user_limit = await self.ai_detection_repository.get_or_create_user_limit(user_id)
+        user_limit = await self.ai_detection_repository.check_and_reset_limits(user_limit)
+        return UserLimitDTO.from_model(user_limit)
+
+    def _validate_file(self, file_name: str, file_content: bytes):
+        """Validate uploaded file."""
         file_size_mb = len(file_content) / (1024 * 1024)
         if file_size_mb > gemini_config.MAX_FILE_SIZE_MB:
             raise ValueError(
@@ -221,7 +317,6 @@ class AIDetectionService:
                 f"allowed size ({gemini_config.MAX_FILE_SIZE_MB}MB)"
             )
 
-        # Check file extension
         file_ext = os.path.splitext(file_name)[1].lower()
         if file_ext not in gemini_config.ALLOWED_FILE_EXTENSIONS:
             raise ValueError(
@@ -237,20 +332,8 @@ class AIDetectionService:
         )
 
     async def _save_temp_file(self, file_content: bytes, file_name: str) -> str:
-        """
-        Save file content to temporary file.
-
-        Args:
-            file_content: File content as bytes
-            file_name: Original file name
-
-        Returns:
-            Path to temporary file
-        """
-        # Get file extension
+        """Save file content to temporary file."""
         _, ext = os.path.splitext(file_name)
-
-        # Create temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
         temp_file.write(file_content)
         temp_file.close()
