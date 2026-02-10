@@ -23,6 +23,33 @@ services:
     networks:
       - app-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: testing_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    environment:
+      REDIS_PASSWORD: Redis123
+    command: >
+      sh -c "
+        if [ -n \"$REDIS_PASSWORD\" ]; then
+          redis-server --requirepass $REDIS_PASSWORD
+        else
+          redis-server
+        fi
+      "
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    volumes:
+      - redis_data:/data
+
   app:
     build:
       context: .
@@ -44,17 +71,36 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
 
+      # Gemini Configuration
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL}
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB}
+      ALLOWED_FILE_EXTENSIONS: ${ALLOWED_FILE_EXTENSIONS}
+
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+      # Rate Limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-10}
+      RATE_LIMIT_PER_HOUR: ${RATE_LIMIT_PER_HOUR:-100}
+
       DEBUG: ${DEBUG:-false}
       APP_NAME: ${APP_NAME:-Testing}
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - app-network
     volumes:
       - ./src:/app/src
       - ./alembic:/app/alembic
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"
 
 
 networks:
@@ -63,4 +109,6 @@ networks:
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
     driver: local

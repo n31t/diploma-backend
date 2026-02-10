@@ -8,6 +8,7 @@ from dishka import FromDishka
 from dishka.integrations.fastapi import DishkaRoute
 from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
 
+from src.api.dependencies.rate_limit import check_rate_limit_dependency
 from src.api.v1.schemas.ai_detection import (
     AIDetectionResponse,
     DetectionResultSchema,
@@ -56,6 +57,7 @@ class AIDetectionWithLimitsResponse(AIDetectionResponse):
 
 @router.post(
     "/detect-text",
+    dependencies=[Depends(check_rate_limit_dependency)],
     response_model=AIDetectionWithLimitsResponse,
     status_code=status.HTTP_200_OK,
     summary="Detect AI-generated text from input",
@@ -174,6 +176,7 @@ async def detect_from_text(
 
 @router.post(
     "/detect-file",
+    dependencies=[Depends(check_rate_limit_dependency)],
     response_model=AIDetectionWithLimitsResponse,
     status_code=status.HTTP_200_OK,
     summary="Detect AI-generated text from file",
