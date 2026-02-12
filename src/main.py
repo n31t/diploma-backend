@@ -2,6 +2,7 @@
 Main FastAPI application with logging, monitoring, and middleware setup.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from dishka import make_async_container
@@ -13,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from src.api.v1.auth import router as auth_router
 from src.api.v1.ai_detection import router as ai_detection_router
 from src.api.v1.limits import router as limits_router
+from src.api.v1.telegram import router as telegram_router
 from src.core.config import config, Config
 from src.core.logging import get_logger, setup_logging
 from src.db.database import check_db_connection
 from src.ioc import AppProvider
+from src.services.telegram_bot_service import telegram_bot_service
 
 setup_logging(
     level="DEBUG" if config.DEBUG else "INFO",
@@ -51,12 +54,29 @@ async def lifespan(app: FastAPI):
             "startup_failed",
             error=str(e),
             error_type=type(e).__name__,
-            exc_info=True
+            exc_info=True,
         )
         raise
 
+    # Start the Telegram bot in a background task (non-blocking)
+    bot_task = None
+    if telegram_bot_service.bot:
+        bot_task = asyncio.create_task(telegram_bot_service.start())
+        logger.info("telegram_bot_task_created")
+    else:
+        logger.info("telegram_bot_skipped_not_configured")
+
     yield
 
+    # Shutdown
+    if bot_task and not bot_task.done():
+        bot_task.cancel()
+        try:
+            await bot_task
+        except asyncio.CancelledError:
+            pass
+
+    await telegram_bot_service.stop()
     logger.info("application_shutdown", app_name=config.APP_NAME)
 
 
@@ -126,21 +146,13 @@ async def readiness_check(engine: FromDishka[AsyncEngine]):
         logger.error("readiness_check_failed_database_unreachable")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection failed"
+            detail="Database connection failed",
         )
-
-    return {
-        "status": "ready",
-        "service": config.APP_NAME,
-        "database": "connected"
-    }
+    return {"status": "ready", "service": config.APP_NAME, "database": "connected"}
 
 
 app.include_router(health_router)
-
-
-
-
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(ai_detection_router, prefix="/api/v1", tags=["AI Detection"])
 app.include_router(limits_router, prefix="/api/v1", tags=["User Limits"])
+app.include_router(telegram_router, prefix="/api/v1", tags=["Telegram"])

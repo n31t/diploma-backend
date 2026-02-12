@@ -7,12 +7,20 @@ login, and token management. Services work with DTOs, not Pydantic schemas.
 
 from __future__ import annotations
 
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from src.core.logging import get_logger
-from src.core.security import hash_password, verify_password, create_access_token, generate_refresh_token
 from src.core.config import Config
-from src.dtos import UserRegisterDTO, UserLoginDTO, TokenDTO
+from src.core.logging import get_logger
+from src.core.security import (
+    create_access_token,
+    generate_refresh_token,
+    hash_password,
+    verify_password,
+)
+from src.dtos import UserLoginDTO, UserRegisterDTO, TokenDTO
+from src.dtos.telegram_dto import TelegramConnectDTO, TelegramStatusDTO
 from src.repositories.auth_repository import AuthRepository
 
 logger = get_logger(__name__)
@@ -29,199 +37,109 @@ class AuthService:
         self,
         user_data: UserRegisterDTO,
         user_agent: Optional[str] = None,
-        ip_address: Optional[str] = None
+        ip_address: Optional[str] = None,
     ) -> TokenDTO:
-        """
-        Register a new user and return authentication tokens.
+        logger.info("registering_user", username=user_data.username, email=user_data.email)
 
-        Args:
-            user_data: User registration DTO
-            user_agent: User agent from request headers
-            ip_address: IP address from request
-
-        Returns:
-            TokenDTO with access and refresh tokens
-
-        Raises:
-            ValueError: If username or email already exists
-
-        Example:
-            >>> service = AuthService(auth_repository, config)
-            >>> dto = UserRegisterDTO(username="john", email="john@example.com", password="SecurePass123")
-            >>> tokens = await service.register_user(dto)
-        """
-        logger.info(
-            "registering_user",
-            username=user_data.username,
-            email=user_data.email
-        )
-
-        # Check if username already exists
-        existing_user = await self.auth_repository.get_user_by_username(user_data.username)
-        if existing_user:
-            logger.warning(
-                "registration_failed_username_exists",
-                username=user_data.username
-            )
+        if await self.auth_repository.get_user_by_username(user_data.username):
             raise ValueError("Username already exists")
-
-        # Check if email already exists
-        existing_email = await self.auth_repository.get_user_by_email(user_data.email)
-        if existing_email:
-            logger.warning(
-                "registration_failed_email_exists",
-                email=user_data.email
-            )
+        if await self.auth_repository.get_user_by_email(user_data.email):
             raise ValueError("Email already exists")
 
-        try:
-            # Hash the password
-            hashed_password = hash_password(user_data.password)
+        hashed_password = hash_password(user_data.password)
+        user = await self.auth_repository.create_user(
+            username=user_data.username,
+            email=user_data.email,
+            hashed_password=hashed_password,
+        )
 
-            # Create the user
-            user = await self.auth_repository.create_user(
-                username=user_data.username,
-                email=user_data.email,
-                hashed_password=hashed_password
-            )
+        access_token = create_access_token(
+            data={"sub": str(user.id), "username": user.username},
+            config=self.config,
+        )
+        refresh_token = generate_refresh_token()
+        await self.auth_repository.create_refresh_token(
+            user_id=user.id,
+            token=refresh_token,
+            expires_days=self.config.REFRESH_TOKEN_EXPIRE_DAYS,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
 
-            # Generate tokens
-            access_token = create_access_token(
-                data={"sub": str(user.id), "username": user.username},
-                config=self.config
-            )
-            refresh_token = generate_refresh_token()
-
-            # Store refresh token
-            await self.auth_repository.create_refresh_token(
-                user_id=user.id,
-                token=refresh_token,
-                expires_days=self.config.REFRESH_TOKEN_EXPIRE_DAYS,
-                user_agent=user_agent,
-                ip_address=ip_address
-            )
-
-            logger.info(
-                "user_registered_successfully",
-                user_id=user.id,
-                username=user.username,
-                email=user.email
-            )
-
-            return TokenDTO(
-                access_token=access_token,
-                refresh_token=refresh_token
-            )
-
-        except Exception as e:
-            logger.error(
-                "user_registration_failed",
-                username=user_data.username,
-                email=user_data.email,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True
-            )
-            raise
+        logger.info("user_registered_successfully", user_id=user.id, username=user.username)
+        return TokenDTO(access_token=access_token, refresh_token=refresh_token)
 
     async def login_user(
         self,
         login_data: UserLoginDTO,
         user_agent: Optional[str] = None,
-        ip_address: Optional[str] = None
+        ip_address: Optional[str] = None,
     ) -> TokenDTO:
-        """
-        Authenticate a user and return authentication tokens.
+        logger.info("login_attempt", username=login_data.username, ip_address=ip_address)
 
-        Args:
-            login_data: User login DTO
-            user_agent: User agent from request headers
-            ip_address: IP address from request
-
-        Returns:
-            TokenDTO with access and refresh tokens
-
-        Raises:
-            ValueError: If credentials are invalid or user is inactive
-
-        Example:
-            >>> service = AuthService(auth_repository, config)
-            >>> dto = UserLoginDTO(username="john", password="SecurePass123")
-            >>> tokens = await service.login_user(dto)
-        """
-        logger.info(
-            "login_attempt",
-            username=login_data.username,
-            ip_address=ip_address
-        )
-
-        # Get user by username
         user = await self.auth_repository.get_user_by_username(login_data.username)
-
-        if not user:
-            logger.warning(
-                "login_failed_user_not_found",
-                username=login_data.username,
-                ip_address=ip_address
-            )
+        if not user or not verify_password(login_data.password, user.hashed_password):
             raise ValueError("Invalid username or password")
-
-        # Verify password
-        if not verify_password(login_data.password, user.hashed_password):
-            logger.warning(
-                "login_failed_invalid_password",
-                username=login_data.username,
-                user_id=user.id,
-                ip_address=ip_address
-            )
-            raise ValueError("Invalid username or password")
-
-        # Check if user is active
         if not user.is_active:
-            logger.warning(
-                "login_failed_user_inactive",
-                username=login_data.username,
-                user_id=user.id,
-                ip_address=ip_address
-            )
             raise ValueError("Account is inactive")
 
-        try:
-            # Generate tokens
-            access_token = create_access_token(
-                data={"sub": str(user.id), "username": user.username},
-                config=self.config
-            )
-            refresh_token = generate_refresh_token()
+        access_token = create_access_token(
+            data={"sub": str(user.id), "username": user.username},
+            config=self.config,
+        )
+        refresh_token = generate_refresh_token()
+        await self.auth_repository.create_refresh_token(
+            user_id=user.id,
+            token=refresh_token,
+            expires_days=self.config.REFRESH_TOKEN_EXPIRE_DAYS,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
 
-            # Store refresh token
-            await self.auth_repository.create_refresh_token(
-                user_id=user.id,
-                token=refresh_token,
-                expires_days=self.config.REFRESH_TOKEN_EXPIRE_DAYS,
-                user_agent=user_agent,
-                ip_address=ip_address
-            )
+        logger.info("login_successful", user_id=user.id, username=user.username)
+        return TokenDTO(access_token=access_token, refresh_token=refresh_token)
 
-            logger.info(
-                "login_successful",
-                user_id=user.id,
-                username=user.username,
-                ip_address=ip_address
-            )
+    # ── Telegram ────────────────────────────────────────────────────────────
 
-            return TokenDTO(
-                access_token=access_token,
-                refresh_token=refresh_token
-            )
+    async def generate_telegram_connection_url(self, user_id: str) -> TelegramConnectDTO:
+        """
+        Generate a one-time deep-link token and return the bot URL.
 
-        except Exception as e:
-            logger.error(
-                "login_failed",
-                username=login_data.username,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True
-            )
-            raise
+        The token is stored on the user row and expires after
+        ``TELEGRAM_CONNECT_TOKEN_TTL_MINUTES`` minutes.
+        """
+        if not self.config.TELEGRAM_BOT_USERNAME:
+            raise ValueError("Telegram bot is not configured")
 
+        token = secrets.token_hex(16)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=self.config.TELEGRAM_CONNECT_TOKEN_TTL_MINUTES
+        )
+
+        user = await self.auth_repository.update_telegram_connect_token(
+            user_id=user_id,
+            token=token,
+            expires_at=expires_at,
+        )
+        if not user:
+            raise ValueError("User not found")
+
+        bot_url = f"https://t.me/{self.config.TELEGRAM_BOT_USERNAME}?start={token}"
+        logger.info("telegram_connection_url_generated", user_id=user_id)
+        return TelegramConnectDTO(bot_url=bot_url)
+
+    async def get_telegram_status(self, user_id: str) -> TelegramStatusDTO:
+        """Return whether the user has a linked Telegram account."""
+        user = await self.auth_repository.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+        return TelegramStatusDTO(
+            is_connected=bool(user.telegram_chat_id),
+            telegram_chat_id=user.telegram_chat_id,
+        )
+
+    async def disconnect_telegram(self, user_id: str) -> None:
+        """Remove the Telegram binding for the user."""
+        logger.info("disconnecting_telegram", user_id=user_id)
+        await self.auth_repository.disconnect_telegram(user_id)
+        logger.info("telegram_disconnected", user_id=user_id)

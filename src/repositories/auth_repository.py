@@ -1,7 +1,5 @@
 """
 Authentication repository for database operations.
-
-This repository handles database queries related to authentication.
 """
 
 from __future__ import annotations
@@ -124,3 +122,62 @@ class AuthRepository:
             select(User).where(User.id == user_id)
         )
         return result.scalar_one_or_none()
+
+    # ── Telegram ────────────────────────────────────────────────────────────
+
+    async def update_telegram_connect_token(
+        self,
+        user_id: str,
+        token: str,
+        expires_at: datetime,
+    ) -> Optional[User]:
+        """Store a short-lived connection token on the user row."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        user.telegram_connect_token = token
+        user.telegram_connect_token_expires_at = expires_at
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
+
+    async def get_user_by_telegram_token(self, token: str) -> Optional[User]:
+        """Return the user that owns *token* if it hasn't expired yet."""
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            select(User).where(
+                User.telegram_connect_token == token,
+                User.telegram_connect_token_expires_at > now,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_user_by_telegram_chat_id(self, chat_id: str) -> Optional[User]:
+        result = await self.session.execute(
+            select(User).where(User.telegram_chat_id == chat_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def connect_telegram_account(self, user_id: str, chat_id: str) -> Optional[User]:
+        """Bind *chat_id* to the user and clear the one-time token."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        user.telegram_chat_id = chat_id
+        user.telegram_connect_token = None
+        user.telegram_connect_token_expires_at = None
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
+
+    async def disconnect_telegram(self, user_id: str) -> Optional[User]:
+        """Remove the Telegram binding for *user_id*."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+        user.telegram_chat_id = None
+        user.telegram_connect_token = None
+        user.telegram_connect_token_expires_at = None
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user

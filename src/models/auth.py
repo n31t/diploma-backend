@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
 )
 from datetime import datetime
+from typing import Optional
 
 
 class User(ULIDMixin, TimestampMixin, Base):
@@ -15,6 +16,17 @@ class User(ULIDMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Telegram integration
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(
+        String(50), unique=True, index=True, nullable=True
+    )
+    telegram_connect_token: Mapped[Optional[str]] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
+    telegram_connect_token_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class RegistrationToken(ULIDMixin, TimestampMixin, Base):
