@@ -1,6 +1,4 @@
-# FastAPI Application with JWT Authentication
-
-A production-ready FastAPI application with PostgreSQL, SQLAlchemy 2.0 async, JWT authentication, structured logging, and comprehensive Docker support.
+# FastAPI Application with Telegram Bot
 
 ## Features
 
@@ -13,46 +11,59 @@ A production-ready FastAPI application with PostgreSQL, SQLAlchemy 2.0 async, JW
 - **Docker & Docker Compose** - Full containerization support
 - **Layered Architecture** - Clean separation: API � Service � Repository � Database
 
-## Quick Start
 
-### Option 1: Using the Start Script (Recommended)
+## Architecture
 
+This project contains two separate processes:
+1. **FastAPI API** (`src/main.py`) - HTTP REST API
+2. **Telegram Bot** (`src/bot_main.py`) - Long-polling Telegram bot
 
+Both share the same:
+- Database (PostgreSQL)
+- Redis cache
+- Domain logic (services, repositories, models)
+- Configuration
 
-The script will guide you through:
-1. Setting up environment variables
-2. Choosing development or production mode
-3. Building Docker images
-4. Starting services
-5. Running migrations
+## Running Locally
 
-### Option 2: Using Docker Compose
-
+### Option 1: Using Makefile (recommended for development)
 ```bash
-# Development mode
-docker compose up --build
-
-# Production mode
-docker compose -f docker-compose.prod.yml up -d --build
-
-# Run migrations
-docker compose run --rm migrate
-```
-
-### Option 4: Local Development (without Docker)
-
-```bash
-# Install dependencies
-uv sync
-
 # Copy environment file
 cp .env.example .env
 
-# Edit .env with your configuration
+# Terminal 1: Run API
+make dev-backend
 
-# Run migrations
+# Terminal 2: Run Bot
+make dev-bot
+```
+
+### Option 2: Using Docker Compose
+```bash
+# Copy environment file
+cp .env.example .env
+
+# Start everything
+docker-compose up --build
+
+
+```
+
+## Production Deployment
+
+### Using Docker Compose
+```bash
+docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+### Using Separate Processes
+```bash
+# Run migrations first
 alembic upgrade head
 
-# Start server
-uvicorn src.main:app --reload
+# Start API (use process manager like systemd/supervisor)
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# Start Bot (separate process)
+python -m src.bot_main
 ```
