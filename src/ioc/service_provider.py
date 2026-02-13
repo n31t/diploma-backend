@@ -11,6 +11,7 @@ from src.services.auth_service import AuthService
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.ml_model_service import AIDetectionModelService
 from src.services.ai_detection_service import AIDetectionService
+from src.services.telegram_detection_service import TelegramDetectionService
 
 
 class ServiceProvider(Provider):
@@ -40,5 +41,18 @@ class ServiceProvider(Provider):
         return AIDetectionService(
             gemini_service,
             ml_model_service,
-            ai_detection_repository
+            ai_detection_repository,
         )
+
+    @provide(scope=Scope.REQUEST)
+    def get_telegram_detection_service(
+        self,
+        ai_detection_service: AIDetectionService,
+    ) -> TelegramDetectionService:
+        """
+        Provide the Telegram-specific detection façade.
+
+        Scoped to REQUEST so it shares the same AIDetectionService
+        (and therefore the same DB session) as the rest of the request graph.
+        """
+        return TelegramDetectionService(ai_detection_service)
