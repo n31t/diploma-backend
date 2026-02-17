@@ -9,9 +9,12 @@ from src.repositories.auth_repository import AuthRepository
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.auth_service import AuthService
 from src.services.gemini_service import GeminiTextExtractor
+from src.services.jina_service import JinaReaderService
 from src.services.ml_model_service import AIDetectionModelService
+from src.services.text_cleaner_service import TextCleanerService
 from src.services.ai_detection_service import AIDetectionService
 from src.services.telegram_detection_service import TelegramDetectionService
+from src.services.url_detection_service import URLDetectionService
 
 
 class ServiceProvider(Provider):
@@ -31,6 +34,18 @@ class ServiceProvider(Provider):
     def get_ml_model_service(self) -> AIDetectionModelService:
         return AIDetectionModelService()
 
+    # ── Jina + TextCleaner are stateless singletons ───────────────────────
+
+    @provide(scope=Scope.APP)
+    def get_jina_service(self) -> JinaReaderService:
+        return JinaReaderService()
+
+    @provide(scope=Scope.APP)
+    def get_text_cleaner(self) -> TextCleanerService:
+        return TextCleanerService()
+
+    # ── Per-request services ──────────────────────────────────────────────
+
     @provide(scope=Scope.REQUEST)
     def get_ai_detection_service(
         self,
@@ -40,6 +55,21 @@ class ServiceProvider(Provider):
     ) -> AIDetectionService:
         return AIDetectionService(
             gemini_service,
+            ml_model_service,
+            ai_detection_repository,
+        )
+
+    @provide(scope=Scope.REQUEST)
+    def get_url_detection_service(
+        self,
+        jina_service: JinaReaderService,
+        text_cleaner: TextCleanerService,
+        ml_model_service: AIDetectionModelService,
+        ai_detection_repository: AIDetectionRepository,
+    ) -> URLDetectionService:
+        return URLDetectionService(
+            jina_service,
+            text_cleaner,
             ml_model_service,
             ai_detection_repository,
         )

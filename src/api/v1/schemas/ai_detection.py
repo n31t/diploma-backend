@@ -5,6 +5,7 @@ These schemas handle request validation and response formatting.
 """
 
 from enum import Enum
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -103,5 +104,38 @@ class ErrorResponse(BaseModel):
             "example": {
                 "detail": "File size exceeds maximum allowed size",
                 "error_type": "ValueError"
+            }
+        }
+
+class URLDetectionRequest(BaseModel):
+    """Request schema for URL-based detection."""
+
+    url: str = Field(
+        ...,
+        description="Full URL of the website to analyse (http/https)",
+        examples=["https://example.com/article"],
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        v = v.strip()
+        try:
+            parsed = urlparse(v)
+        except Exception:
+            raise ValueError("Invalid URL format")
+
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Only http and https URLs are supported")
+
+        if not parsed.netloc:
+            raise ValueError("URL must include a host (e.g. https://example.com)")
+
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "url": "https://openai.com/blog/chatgpt"
             }
         }

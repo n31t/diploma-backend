@@ -12,6 +12,7 @@ class DetectionSource(str, Enum):
     """Source of text for detection."""
     TEXT = "text"
     FILE = "file"
+    URL = "url"
 
 
 class DetectionResult(str, Enum):
@@ -46,3 +47,17 @@ class AIDetectionResultDTO:
     source: DetectionSource
     file_name: str | None = None
     metadata: dict | None = None
+
+@dataclass
+class URLDetectionRequestDTO:
+    """DTO for URL detection request."""
+    url: str
+    user_id: str
+
+
+@dataclass
+class JinaFetchResultDTO:
+    """DTO for result fetched from Jina."""
+    raw_markdown: str
+    url: str
+    title: str | None = None

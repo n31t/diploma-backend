@@ -13,7 +13,7 @@ from src.api.v1.schemas.ai_detection import (
     AIDetectionResponse,
     DetectionResultSchema,
     DetectionSourceSchema,
-    TextDetectionRequest,
+    TextDetectionRequest, URLDetectionRequest,
 )
 from src.api.v1.schemas.limits import UserLimitsResponse
 from src.core.logging import get_logger
@@ -21,6 +21,7 @@ from src.dtos import AuthenticatedUserDTO
 from src.dtos.ai_detection_dto import DetectionResult, DetectionSource
 from src.services.ai_detection_service import AIDetectionService
 from src.services.shared.auth_helpers import get_authenticated_user_dependency
+from src.services.url_detection_service import URLDetectionService
 
 logger = get_logger(__name__)
 
@@ -331,3 +332,131 @@ async def detect_from_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to detect AI text from file"
         )
+
+
+@router.post(
+    "/detect-url",
+    dependencies=[Depends(check_rate_limit_dependency)],
+    response_model=AIDetectionWithLimitsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Detect AI-generated content from a website URL",
+    description=(
+        "Fetches the page at the given URL via Jina Reader, "
+        "converts it to clean plain text, and analyses it with "
+        "the AI detection model. Returns the same response shape "
+        "as the text/file detection endpoints."
+    ),
+)
+async def detect_from_url(
+    request: URLDetectionRequest,
+    service: FromDishka[URLDetectionService],
+    current_user: Annotated[
+        AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)
+    ],
+) -> AIDetectionWithLimitsResponse:
+    """
+    Detect AI-generated content from a public website URL.
+
+    **Request Body:**
+    - `url`: Full URL (http / https) of the page to analyse.
+
+    **Pipeline:**
+    1. Validate URL format.
+    2. Fetch page content via Jina Reader (r.jina.ai).
+    3. Strip Markdown markup → clean plain text.
+    4. Run AI detection model.
+    5. Persist result in history, decrement user quota.
+
+    **Response:**
+    Same shape as `/detect-text` and `/detect-file`, with `source = "file"`
+    and `file_name` set to the submitted URL.
+
+    **Errors:**
+    - `400` — invalid URL / no readable text on the page.
+    - `429` — rate limit exceeded (Redis) or user quota exhausted.
+    - `502` — Jina Reader is unreachable.
+    - `500` — unexpected server error.
+    """
+    logger.info(
+        "url_detection_request",
+        url=request.url,
+        user_id=current_user.id,
+        username=current_user.username,
+    )
+
+    try:
+        result_dto, limits_dto = await service.detect_from_url(
+            url=request.url,
+            user_id=current_user.id,
+        )
+
+    except ValueError as exc:
+        msg = str(exc)
+        if "limit exceeded" in msg.lower():
+            logger.warning("url_detection_limit_exceeded", url=request.url, error=msg)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=msg,
+            )
+        logger.warning("url_detection_validation_error", url=request.url, error=msg)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=msg,
+        )
+
+    except RuntimeError as exc:
+        logger.error(
+            "url_detection_fetch_failed",
+            url=request.url,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch or process the requested URL.",
+        )
+
+    except Exception as exc:
+        logger.error(
+            "url_detection_unexpected_error",
+            url=request.url,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to detect AI content from URL.",
+        )
+
+    response = AIDetectionWithLimitsResponse(
+        result=_map_detection_result_to_schema(result_dto.result),
+        confidence=result_dto.confidence,
+        text_preview=result_dto.text_preview,
+        source=_map_detection_source_to_schema(result_dto.source),
+        file_name=result_dto.file_name,
+        metadata=result_dto.metadata,
+        limits=UserLimitsResponse(
+            daily_limit=limits_dto.daily_limit,
+            daily_used=limits_dto.daily_used,
+            daily_remaining=limits_dto.daily_remaining,
+            daily_reset_at=limits_dto.daily_reset_at,
+            monthly_limit=limits_dto.monthly_limit,
+            monthly_used=limits_dto.monthly_used,
+            monthly_remaining=limits_dto.monthly_remaining,
+            monthly_reset_at=limits_dto.monthly_reset_at,
+            total_requests=limits_dto.total_requests,
+            is_premium=limits_dto.is_premium,
+            can_make_request=limits_dto.can_make_request,
+        ),
+    )
+
+    logger.info(
+        "url_detection_success",
+        url=request.url,
+        result=result_dto.result.value,
+        confidence=result_dto.confidence,
+        user_id=current_user.id,
+    )
+
+    return response
