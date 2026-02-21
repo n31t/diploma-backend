@@ -30,4 +30,5 @@ dependencies = [
     "python-multipart>=0.0.22",
     "redis>=5.2.0",
     "aiogram==3.25.0",
+    "httpx>=0.28.1",
 ]

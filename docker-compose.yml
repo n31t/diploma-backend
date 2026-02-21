@@ -132,6 +132,35 @@ services:
       - ./src:/app/src
     command: python -m src.bot_main
 
+  ml-api:
+    build:
+      context: ../../diploma-ml-api
+      dockerfile: Dockerfile
+    container_name: testing_ml_api
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-testing}
+      DB_HOST: db
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      DEBUG: ${DEBUG:-false}
+      SECRET_KEY: ${SECRET_KEY}
+      APP_NAME: ${APP_NAME:-Testing-ML}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
