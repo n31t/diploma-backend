@@ -88,6 +88,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ml-api:
+        condition: service_started
     networks:
       - app-network
     volumes:
@@ -153,6 +155,7 @@ services:
       DEBUG: ${DEBUG:-false}
       SECRET_KEY: ${SECRET_KEY}
       APP_NAME: ${APP_NAME:-Testing-ML}
+      HF_TOKEN: ${HF_TOKEN}
     depends_on:
       db:
         condition: service_healthy
