@@ -47,6 +47,7 @@ def _map_detection_source_to_schema(source: DetectionSource) -> DetectionSourceS
     mapping = {
         DetectionSource.TEXT: DetectionSourceSchema.TEXT,
         DetectionSource.FILE: DetectionSourceSchema.FILE,
+        DetectionSource.URL: DetectionSourceSchema.URL,
     }
     return mapping[source]
 

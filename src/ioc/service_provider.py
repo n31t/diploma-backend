@@ -9,9 +9,8 @@ from src.repositories.auth_repository import AuthRepository
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.auth_service import AuthService
 from src.services.gemini_service import GeminiTextExtractor
-from src.services.jina_service import JinaReaderService
+from src.services.newspaper_service import NewspaperService
 from src.services.ml_model_service import AIDetectionModelService
-from src.services.text_cleaner_service import TextCleanerService
 from src.services.ai_detection_service import AIDetectionService
 from src.services.telegram_detection_service import TelegramDetectionService
 from src.services.url_detection_service import URLDetectionService
@@ -26,25 +25,30 @@ class ServiceProvider(Provider):
     ) -> AuthService:
         return AuthService(auth_repository, config)
 
+    # ── Stateless singletons (APP scope) ──────────────────────────────────
+
     @provide(scope=Scope.APP)
     def get_gemini_service(self) -> GeminiTextExtractor:
+        """Gemini AI service for file text extraction (PDF, DOCX, etc.)."""
         return GeminiTextExtractor()
 
     @provide(scope=Scope.APP)
     def get_ml_model_service(self) -> AIDetectionModelService:
+        """ML microservice client for AI text detection inference."""
         return AIDetectionModelService()
 
-    # ── Jina + TextCleaner are stateless singletons ───────────────────────
-
     @provide(scope=Scope.APP)
-    def get_jina_service(self) -> JinaReaderService:
-        return JinaReaderService()
+    def get_newspaper_service(self) -> NewspaperService:
+        """
+        Newspaper service for downloading and extracting article text from URLs.
 
-    @provide(scope=Scope.APP)
-    def get_text_cleaner(self) -> TextCleanerService:
-        return TextCleanerService()
+        Replaces the former JinaReaderService + TextCleanerService pair.
+        newspaper4k handles fetching, HTML parsing, boilerplate removal,
+        and returns clean plain text directly.
+        """
+        return NewspaperService()
 
-    # ── Per-request services ──────────────────────────────────────────────
+    # ── Per-request services (REQUEST scope) ──────────────────────────────
 
     @provide(scope=Scope.REQUEST)
     def get_ai_detection_service(
@@ -62,14 +66,17 @@ class ServiceProvider(Provider):
     @provide(scope=Scope.REQUEST)
     def get_url_detection_service(
         self,
-        jina_service: JinaReaderService,
-        text_cleaner: TextCleanerService,
+        newspaper_service: NewspaperService,
         ml_model_service: AIDetectionModelService,
         ai_detection_repository: AIDetectionRepository,
     ) -> URLDetectionService:
+        """
+        URL detection service wired with NewspaperService instead of Jina.
+
+        TextCleanerService is no longer needed — newspaper returns plain text.
+        """
         return URLDetectionService(
-            jina_service,
-            text_cleaner,
+            newspaper_service,
             ml_model_service,
             ai_detection_repository,
         )
@@ -80,7 +87,7 @@ class ServiceProvider(Provider):
         ai_detection_service: AIDetectionService,
     ) -> TelegramDetectionService:
         """
-        Provide the Telegram-specific detection façade.
+        Telegram-specific detection façade.
 
         Scoped to REQUEST so it shares the same AIDetectionService
         (and therefore the same DB session) as the rest of the request graph.

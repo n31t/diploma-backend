@@ -14,6 +14,7 @@ class DetectionSourceSchema(str, Enum):
     """Source of text for detection."""
     TEXT = "text"
     FILE = "file"
+    URL = "url"
 
 
 class DetectionResultSchema(str, Enum):
