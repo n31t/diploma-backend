@@ -51,6 +51,8 @@ class AIDetectionResponse(BaseModel):
     )
     confidence: float = Field(
         ...,
+        ge=0.0,
+        le=1.0,
         description="Confidence score between 0.0 and 1.0"
     )
     text_preview: str = Field(

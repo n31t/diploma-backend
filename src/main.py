@@ -21,6 +21,7 @@ from src.core.config import config, Config
 from src.core.logging import get_logger, setup_logging
 from src.db.database import check_db_connection
 from src.ioc import AppProvider
+from fastapi.middleware.cors import CORSMiddleware
 
 setup_logging(
     level="DEBUG" if config.DEBUG else "INFO",
@@ -67,6 +68,14 @@ def create_app() -> FastAPI:
         description="FastAPI application - AI Detection API",
         version="0.1.0",
         lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     fastapi_integration.setup_dishka(container, app)

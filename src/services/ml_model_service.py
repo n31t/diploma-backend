@@ -127,7 +127,13 @@ class AIDetectionModelService:
                     result = DetectionResult.UNCERTAIN
 
             # Confidence: prefer explicit certainty, then ai_probability, else 0.0
-            confidence = round(float(certainty_f if certainty_f is not None else (ai_probability_f if ai_probability_f is not None else 0.0)), 3)
+            confidence = round(
+                float(
+                    (certainty_f / 100.0) if certainty_f is not None and certainty_f > 1 else
+                    (ai_probability_f if ai_probability_f is not None else 0.0)
+                ),
+                3
+            )
 
             logger.info(
                 "detection_complete",
