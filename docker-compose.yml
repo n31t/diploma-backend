@@ -1,3 +1,9 @@
+x-backend: &backend_defaults
+  image: diploma-backend:dev
+  build:
+    context: .
+    dockerfile: Dockerfile
+
 services:
   db:
     image: postgres:16-alpine
@@ -48,9 +54,7 @@ services:
 
   # FastAPI Application (HTTP API)
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *backend_defaults
     container_name: testing_api
     restart: unless-stopped
     ports:
@@ -104,9 +108,7 @@ services:
 
   # Telegram Bot (separate process)
   bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *backend_defaults
     container_name: testing_bot
     restart: unless-stopped
     environment:
@@ -168,6 +170,8 @@ services:
         condition: service_healthy
     networks:
       - app-network
+    volumes:
+      - hf_cache:/app/cache/huggingface
 
   frontend:
     build:
@@ -191,4 +195,6 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  hf_cache:
     driver: local
