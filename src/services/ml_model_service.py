@@ -3,44 +3,82 @@ ML Model service for AI text detection.
 
 This service handles interaction with the ML microservice that detects
 whether text is AI-generated or human-written.
+Routes to Russian (ML_API_URL) or Kazakh (ML_API_URL_KK) backends by language.
 """
 
 import os
+from typing import Any, Iterable, Literal, Tuple
+
 import httpx
-from typing import Tuple, Any, Iterable
 
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import DetectionResult
 
 logger = get_logger(__name__)
 
-# Allow overriding the ML API base URL via environment variable for tests and deployments
-ML_API_URL = os.getenv("ML_API_URL", "http://ml-api:8000")
+ML_API_URL = os.getenv("ML_API_URL", "http://ml-api:8000").rstrip("/")
+ML_API_URL_KK = os.getenv("ML_API_URL_KK", "").strip().rstrip("/")
+
+DetectionMlLanguage = Literal["ru", "kk"]
+
+
+class KazakhMlApiUnavailableError(RuntimeError):
+    """Raised when Kazakh (kk) detection is requested but ML_API_URL_KK is unset."""
 
 
 class AIDetectionModelService:
     """Service for AI text detection via ML microservice."""
 
     def __init__(self):
-        """Initialize AI detection model service."""
-        self._client = httpx.AsyncClient(base_url=ML_API_URL, timeout=30.0)
-        logger.info("ai_detection_model_initialized")
+        """Initialize AI detection model service with per-language HTTP clients."""
+        self._ru_url = ML_API_URL
+        self._kk_url = ML_API_URL_KK or ""
+        self._clients: dict[DetectionMlLanguage, httpx.AsyncClient] = {}
+        self._init_client("ru", self._ru_url)
+        if self._kk_url:
+            self._init_client("kk", self._kk_url)
+        logger.info(
+            "ai_detection_model_initialized",
+            ru_base=self._ru_url,
+            kk_configured=bool(self._kk_url),
+        )
 
-    async def detect_ai_text(self, text: str) -> Tuple[DetectionResult, float]:
+    def _init_client(self, lang: DetectionMlLanguage, base_url: str) -> None:
+        self._clients[lang] = httpx.AsyncClient(base_url=base_url, timeout=30.0)
+
+    def _client_for(self, language: DetectionMlLanguage) -> httpx.AsyncClient:
+        if language == "kk":
+            if not self._kk_url:
+                raise KazakhMlApiUnavailableError(
+                    "Kazakh language detection is not available yet: "
+                    "set ML_API_URL_KK to the Kazakh ML API base URL."
+                )
+            if "kk" not in self._clients:
+                self._init_client("kk", self._kk_url)
+        return self._clients[language]
+
+    async def detect_ai_text(
+        self,
+        text: str,
+        *,
+        language: DetectionMlLanguage = "ru",
+    ) -> Tuple[DetectionResult, float]:
         """
         Detect if text is AI-generated or human-written.
 
         Args:
             text: Text to analyze
+            language: ML backend selector: ru or kk
 
         Returns:
             Tuple of (DetectionResult, confidence_score)
             confidence_score is between 0.0 and 1.0
         """
+        client = self._client_for(language)
         try:
-            logger.info("analyzing_text", text_length=len(text))
+            logger.info("analyzing_text", text_length=len(text), ml_language=language)
 
-            response = await self._client.post(
+            response = await client.post(
                 "/api/v1/detection/",
                 json={"text": text},
             )
@@ -60,7 +98,11 @@ class AIDetectionModelService:
             # Normalize to dict when possible
             if not isinstance(data, dict):
                 # e.g. some services return a list or other container — log and try to coerce
-                logger.warning("detection_unexpected_payload_type", payload_type=type(data).__name__, payload_preview=str(data)[:500])
+                logger.warning(
+                    "detection_unexpected_payload_type",
+                    payload_type=type(data).__name__,
+                    payload_preview=str(data)[:500],
+                )
 
             # Helper to pull candidate keys (supports nested dot paths)
             def _extract(data_obj: Any, candidates: Iterable[str]) -> Any:
@@ -91,8 +133,20 @@ class AIDetectionModelService:
                 return None
 
             # Try a number of likely key names used by different ML services
-            label = _extract(data, ["label", "result", "prediction", "predicted_label", "output.label"])
-            ai_probability = _extract(data, ["ai_probability", "probability", "ai_prob", "score", "prob", "predicted_probability"])
+            label = _extract(
+                data, ["label", "result", "prediction", "predicted_label", "output.label"]
+            )
+            ai_probability = _extract(
+                data,
+                [
+                    "ai_probability",
+                    "probability",
+                    "ai_prob",
+                    "score",
+                    "prob",
+                    "predicted_probability",
+                ],
+            )
             certainty = _extract(data, ["certainty", "confidence", "score", "certainty_score"])
 
             # If keys missing, log response for debugging and try to derive from available fields
@@ -129,10 +183,11 @@ class AIDetectionModelService:
             # Confidence: prefer explicit certainty, then ai_probability, else 0.0
             confidence = round(
                 float(
-                    (certainty_f / 100.0) if certainty_f is not None and certainty_f > 1 else
-                    (ai_probability_f if ai_probability_f is not None else 0.0)
+                    (certainty_f / 100.0)
+                    if certainty_f is not None and certainty_f > 1
+                    else (ai_probability_f if ai_probability_f is not None else 0.0)
                 ),
-                3
+                3,
             )
 
             logger.info(
@@ -140,6 +195,7 @@ class AIDetectionModelService:
                 result=result.value,
                 confidence=confidence,
                 text_length=len(text),
+                ml_language=language,
                 model_used=_extract(data, ["model", "model_used", "modelName"]),
             )
 
@@ -150,6 +206,7 @@ class AIDetectionModelService:
                 "detection_request_failed",
                 status_code=e.response.status_code,
                 error=str(e),
+                ml_language=language,
                 exc_info=True,
             )
             raise
@@ -158,6 +215,7 @@ class AIDetectionModelService:
                 "detection_connection_failed",
                 error=str(e),
                 error_type=type(e).__name__,
+                ml_language=language,
                 exc_info=True,
             )
             raise
@@ -167,6 +225,7 @@ class AIDetectionModelService:
                 "detection_failed",
                 error=str(e),
                 error_type=type(e).__name__,
+                ml_language=language,
                 exc_info=True,
             )
             return DetectionResult.UNCERTAIN, 0.0
@@ -219,5 +278,7 @@ class AIDetectionModelService:
         return True
 
     async def close(self):
-        """Close the underlying HTTP client."""
-        await self._client.aclose()
+        """Close the underlying HTTP clients."""
+        for c in self._clients.values():
+            await c.aclose()
+        self._clients.clear()

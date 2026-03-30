@@ -6,20 +6,26 @@ from typing import Annotated
 
 from dishka import FromDishka
 from dishka.integrations.fastapi import DishkaRoute
-from fastapi import APIRouter, File, HTTPException, UploadFile, status, Depends
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status, Depends
 
 from src.api.dependencies.rate_limit import check_rate_limit_dependency
 from src.api.v1.schemas.ai_detection import (
     AIDetectionResponse,
     DetectionResultSchema,
     DetectionSourceSchema,
-    TextDetectionRequest, URLDetectionRequest,
+    TextDetectionRequest,
+    URLDetectionRequest,
+)
+from src.api.v1.schemas.detection_language import (
+    context_from_api_language,
+    parse_detection_language,
 )
 from src.api.v1.schemas.limits import UserLimitsResponse
 from src.core.logging import get_logger
 from src.dtos import AuthenticatedUserDTO
 from src.dtos.ai_detection_dto import DetectionResult, DetectionSource
 from src.services.ai_detection_service import AIDetectionService
+from src.services.ml_model_service import KazakhMlApiUnavailableError
 from src.services.shared.auth_helpers import get_authenticated_user_dependency
 from src.services.url_detection_service import URLDetectionService
 
@@ -93,17 +99,21 @@ async def detect_from_text(
     - 429: Rate limit exceeded
     """
     try:
+        lang_ctx = context_from_api_language(request.language)
         logger.info(
             "detect_text_request",
             text_length=len(request.text),
             user_id=current_user.id,
-            username=current_user.username
+            username=current_user.username,
+            language_requested=lang_ctx.requested,
+            language_effective=lang_ctx.effective,
         )
 
         # Detect AI text (includes limit checking and history tracking)
         result_dto, limits_dto = await service.detect_from_text(
             text=request.text,
-            user_id=current_user.id
+            user_id=current_user.id,
+            language=lang_ctx,
         )
 
         # Map DTO to response schema
@@ -139,6 +149,17 @@ async def detect_from_text(
         )
 
         return response
+
+    except KazakhMlApiUnavailableError as e:
+        logger.warning(
+            "detect_text_kk_ml_unavailable",
+            detail=str(e),
+            user_id=current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        )
 
     except ValueError as e:
         # Check if it's a limit error
@@ -188,6 +209,13 @@ async def detect_from_file(
     file: Annotated[UploadFile, File(description="File to analyze (PDF, DOCX, DOC, TXT)")],
     service: FromDishka[AIDetectionService],
     current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    language: Annotated[
+        str,
+        Form(
+            default="auto",
+            description="ru | kk | auto (→ ru); kz accepted as kk",
+        ),
+    ] = "auto",
 ):
     """
     Detect if text in uploaded file is AI-generated or human-written.
@@ -226,12 +254,22 @@ async def detect_from_file(
     - 502: Text extraction service temporarily unavailable
     """
     try:
+        lang_ctx = parse_detection_language(language)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    try:
         logger.info(
             "detect_file_request",
             file_name=file.filename,
             content_type=file.content_type,
             user_id=current_user.id,
-            username=current_user.username
+            username=current_user.username,
+            language_requested=lang_ctx.requested,
+            language_effective=lang_ctx.effective,
         )
 
         # Read file content
@@ -245,7 +283,8 @@ async def detect_from_file(
             file_content=file_content,
             file_name=file.filename or "unknown",
             content_type=file.content_type or "application/octet-stream",
-            user_id=current_user.id
+            user_id=current_user.id,
+            language=lang_ctx,
         )
 
         # Map DTO to response schema
@@ -282,6 +321,17 @@ async def detect_from_file(
         )
 
         return response
+
+    except KazakhMlApiUnavailableError as e:
+        logger.warning(
+            "detect_file_kk_ml_unavailable",
+            detail=str(e),
+            user_id=current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        )
 
     except ValueError as e:
         # Check if it's a limit error
@@ -378,17 +428,33 @@ async def detect_from_url(
     - `502` — Jina Reader is unreachable.
     - `500` — unexpected server error.
     """
+    lang_ctx = context_from_api_language(request.language)
     logger.info(
         "url_detection_request",
         url=request.url,
         user_id=current_user.id,
         username=current_user.username,
+        language_requested=lang_ctx.requested,
+        language_effective=lang_ctx.effective,
     )
 
     try:
         result_dto, limits_dto = await service.detect_from_url(
             url=request.url,
             user_id=current_user.id,
+            language=lang_ctx,
+        )
+
+    except KazakhMlApiUnavailableError as exc:
+        logger.warning(
+            "url_detection_kk_ml_unavailable",
+            url=request.url,
+            detail=str(exc),
+            user_id=current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
         )
 
     except ValueError as exc:

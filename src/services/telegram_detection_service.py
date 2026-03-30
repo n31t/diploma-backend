@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.api.v1.schemas.detection_language import context_from_api_language
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import AIDetectionResultDTO, DetectionResult
 from src.dtos.limits_dto import UserLimitDTO
@@ -66,6 +67,7 @@ class TelegramDetectionService:
         result_dto, limits_dto = await self._ai_detection.detect_from_text(
             text=text,
             user_id=user_id,
+            language=context_from_api_language("auto"),
         )
 
         return self._build_result(
@@ -101,6 +103,7 @@ class TelegramDetectionService:
             file_name=file_name,
             content_type=content_type,
             user_id=user_id,
+            language=context_from_api_language("auto"),
         )
 
         return self._build_result(
@@ -133,6 +136,7 @@ class TelegramDetectionService:
             file_name=file_name,
             content_type="image/jpeg",
             user_id=user_id,
+            language=context_from_api_language("auto"),
         )
 
         return self._build_result(

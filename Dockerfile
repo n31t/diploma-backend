@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
+# ARG in COPY --from is not reliably expanded; pin via first FROM, then copy by stage name.
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
+FROM ${UV_IMAGE} AS uv_bin
+
 FROM python:3.13-slim AS builder
 
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
-
-COPY --from=${UV_IMAGE} /uv /uvx /bin/
+COPY --from=uv_bin /uv /uvx /bin/
 
 WORKDIR /app
 

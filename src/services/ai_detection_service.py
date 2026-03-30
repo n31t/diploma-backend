@@ -5,8 +5,8 @@ AI Detection service layer with limits and history tracking.
 import os
 import tempfile
 import time
-from typing import Optional
 
+from src.api.v1.schemas.detection_language import DetectionLanguageContext
 from src.core.gemini_config import gemini_config
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import (
@@ -71,7 +71,9 @@ class AIDetectionService:
     async def detect_from_text(
         self,
         text: str,
-        user_id: str
+        user_id: str,
+        *,
+        language: DetectionLanguageContext,
     ) -> tuple[AIDetectionResultDTO, UserLimitDTO]:
         """
         Detect AI-generated text from provided text string.
@@ -88,7 +90,13 @@ class AIDetectionService:
         """
         start_time = time.time()
 
-        logger.info("detecting_from_text", text_length=len(text), user_id=user_id)
+        logger.info(
+            "detecting_from_text",
+            text_length=len(text),
+            user_id=user_id,
+            language_requested=language.requested,
+            language_effective=language.effective,
+        )
 
         # Check limits
         await self.check_user_limits(user_id)
@@ -99,7 +107,9 @@ class AIDetectionService:
 
         try:
             # Run AI detection
-            result, confidence = await self.ml_model_service.detect_ai_text(text)
+            result, confidence = await self.ml_model_service.detect_ai_text(
+                text, language=language.effective
+            )
 
             # Calculate processing time
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -115,6 +125,8 @@ class AIDetectionService:
                     "text_length": len(text),
                     "word_count": len(text.split()),
                     "processing_time_ms": processing_time_ms,
+                    "language_requested": language.requested,
+                    "language_effective": language.effective,
                 }
             )
 
@@ -158,7 +170,9 @@ class AIDetectionService:
         file_content: bytes,
         file_name: str,
         content_type: str,
-        user_id: str
+        user_id: str,
+        *,
+        language: DetectionLanguageContext,
     ) -> tuple[AIDetectionResultDTO, UserLimitDTO]:
         """
         Detect AI-generated text from uploaded file.
@@ -182,7 +196,9 @@ class AIDetectionService:
             file_name=file_name,
             content_type=content_type,
             file_size=len(file_content),
-            user_id=user_id
+            user_id=user_id,
+            language_requested=language.requested,
+            language_effective=language.effective,
         )
 
         # Check limits
@@ -210,7 +226,9 @@ class AIDetectionService:
                 )
 
             # Run AI detection on extracted text
-            result, confidence = await self.ml_model_service.detect_ai_text(extracted_text)
+            result, confidence = await self.ml_model_service.detect_ai_text(
+                extracted_text, language=language.effective
+            )
 
             # Calculate processing time
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -228,6 +246,8 @@ class AIDetectionService:
                     "extracted_text_length": len(extracted_text),
                     "word_count": len(extracted_text.split()),
                     "processing_time_ms": processing_time_ms,
+                    "language_requested": language.requested,
+                    "language_effective": language.effective,
                 }
             )
 

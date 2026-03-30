@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import time
 
+from src.api.v1.schemas.detection_language import DetectionLanguageContext
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import AIDetectionResultDTO, DetectionSource
 from src.dtos.limits_dto import UserLimitDTO
@@ -80,6 +81,8 @@ class URLDetectionService:
         self,
         url: str,
         user_id: str,
+        *,
+        language: DetectionLanguageContext,
     ) -> tuple[AIDetectionResultDTO, UserLimitDTO]:
         """
         Run the full URL → detection pipeline for a user.
@@ -96,7 +99,13 @@ class URLDetectionService:
             RuntimeError: Network error or ML microservice unavailable.
         """
         start_time = time.time()
-        logger.info("url_detection_start", url=url, user_id=user_id)
+        logger.info(
+            "url_detection_start",
+            url=url,
+            user_id=user_id,
+            language_requested=language.requested,
+            language_effective=language.effective,
+        )
 
         # ── 1. Check limits ────────────────────────────────────────────────
         can_request, user_limit = await self._repo.can_make_request(user_id)
@@ -136,7 +145,9 @@ class URLDetectionService:
             )
 
         # ── 5. ML inference ────────────────────────────────────────────────
-        result, confidence = await self._model.detect_ai_text(plain_text)
+        result, confidence = await self._model.detect_ai_text(
+            plain_text, language=language.effective
+        )
         processing_time_ms = int((time.time() - start_time) * 1000)
 
         # ── 6. Persist ─────────────────────────────────────────────────────
@@ -169,6 +180,8 @@ class URLDetectionService:
                 "text_length": len(plain_text),
                 "word_count": len(plain_text.split()),
                 "processing_time_ms": processing_time_ms,
+                "language_requested": language.requested,
+                "language_effective": language.effective,
             },
         )
 

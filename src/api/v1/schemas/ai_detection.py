@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.api.v1.schemas.detection_language import DetectionLanguageInput
+
 
 class DetectionSourceSchema(str, Enum):
     """Source of text for detection."""
@@ -32,6 +34,19 @@ class TextDetectionRequest(BaseModel):
         min_length=50,
         description="Text to analyze for AI detection"
     )
+    language: DetectionLanguageInput = Field(
+        default="auto",
+        description="Analysis language: ru (Russian ML API), kk (Kazakh ML API), auto → ru",
+    )
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language_json(cls, v: object) -> str:
+        if v is None or v == "":
+            return "auto"
+        if isinstance(v, str) and v.strip().lower() == "kz":
+            return "kk"
+        return v if isinstance(v, str) else str(v)
 
     @field_validator("text")
     @classmethod
@@ -116,6 +131,19 @@ class URLDetectionRequest(BaseModel):
         description="Full URL of the website to analyse (http/https)",
         examples=["https://example.com/article"],
     )
+    language: DetectionLanguageInput = Field(
+        default="auto",
+        description="Analysis language: ru, kk, or auto (→ ru)",
+    )
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_url_language_json(cls, v: object) -> str:
+        if v is None or v == "":
+            return "auto"
+        if isinstance(v, str) and v.strip().lower() == "kz":
+            return "kk"
+        return v if isinstance(v, str) else str(v)
 
     @field_validator("url")
     @classmethod
