@@ -17,7 +17,7 @@ from src.dtos.ai_detection_dto import DetectionResult
 logger = get_logger(__name__)
 
 ML_API_URL = os.getenv("ML_API_URL", "http://ml-api:8000").rstrip("/")
-ML_API_URL_KK = os.getenv("ML_API_URL_KK", "").strip().rstrip("/")
+ML_API_URL_KK = os.getenv("ML_API_URL_KK", "http://ml-api:8000").strip().rstrip("/")
 
 DetectionMlLanguage = Literal["ru", "kk"]
 
@@ -80,7 +80,7 @@ class AIDetectionModelService:
 
             response = await client.post(
                 "/api/v1/detection/",
-                json={"text": text},
+                json={"text": text, "language": language},
             )
             response.raise_for_status()
 
