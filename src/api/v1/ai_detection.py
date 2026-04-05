@@ -211,10 +211,7 @@ async def detect_from_file(
     current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
     language: Annotated[
         str,
-        Form(
-            default="auto",
-            description="ru | kk | auto (→ ru); kz accepted as kk",
-        ),
+        Form(description="ru | kk | auto (→ ru); kz accepted as kk"),
     ] = "auto",
 ):
     """
