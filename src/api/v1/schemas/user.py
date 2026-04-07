@@ -44,9 +44,9 @@ class TokenResponse(BaseModel):
 
 
 class UserLogin(BaseModel):
-    """User login model."""
+    """User login model. Accepts username or email in the `login` field."""
 
-    username: str = Field(..., min_length=3, max_length=50)
+    login: str = Field(..., min_length=3, max_length=100, description="Username or email")
     password: str = Field(..., min_length=1)
 
 

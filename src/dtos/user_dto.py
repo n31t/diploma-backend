@@ -21,7 +21,7 @@ class UserRegisterDTO:
 @dataclass
 class UserLoginDTO:
     """DTO for user login data."""
-    username: str
+    login: str   # username / email
     password: str
 
 

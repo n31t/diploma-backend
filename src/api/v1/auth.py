@@ -35,7 +35,6 @@ async def register(
     Register a new user.
     """
     try:
-        # Extract request metadata
         user_agent = request.headers.get("user-agent")
         ip_address = request.client.host if request.client else None
 
@@ -46,10 +45,8 @@ async def register(
             ip_address=ip_address
         )
 
-        # Convert schema to DTO
         user_dto = UserRegisterDTO(**user_data.model_dump())
 
-        # Register user
         token = await service.register_user(
             user_data=user_dto,
             user_agent=user_agent,
@@ -96,20 +93,17 @@ async def login(
     Login a user.
     """
     try:
-        # Extract request metadata
         user_agent = request.headers.get("user-agent")
         ip_address = request.client.host if request.client else None
 
         logger.info(
             "login_request",
-            username=login_data.username,
+            login=login_data.login,
             ip_address=ip_address
         )
 
-        # Convert schema to DTO
         login_dto = UserLoginDTO(**login_data.model_dump())
 
-        # Login user
         token = await service.login_user(
             login_data=login_dto,
             user_agent=user_agent,
@@ -118,7 +112,7 @@ async def login(
 
         logger.info(
             "login_endpoint_successful",
-            username=login_data.username
+            login=login_data.login
         )
 
         return token
@@ -126,7 +120,7 @@ async def login(
     except ValueError as e:
         logger.warning(
             "login_authentication_error",
-            username=login_data.username,
+            login=login_data.login,
             error=str(e)
         )
         raise HTTPException(
@@ -136,7 +130,7 @@ async def login(
     except Exception as e:
         logger.error(
             "login_endpoint_failed",
-            username=login_data.username,
+            login=login_data.login,
             error=str(e),
             error_type=type(e).__name__,
             exc_info=True

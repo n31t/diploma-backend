@@ -75,11 +75,17 @@ class AuthService:
         user_agent: Optional[str] = None,
         ip_address: Optional[str] = None,
     ) -> TokenDTO:
-        logger.info("login_attempt", username=login_data.username, ip_address=ip_address)
+        login = login_data.login
+        logger.info("login_attempt", login=login, ip_address=ip_address)
 
-        user = await self.auth_repository.get_user_by_username(login_data.username)
+        # Определяем: email или username
+        if "@" in login:
+            user = await self.auth_repository.get_user_by_email(login)
+        else:
+            user = await self.auth_repository.get_user_by_username(login)
+
         if not user or not verify_password(login_data.password, user.hashed_password):
-            raise ValueError("Invalid username or password")
+            raise ValueError("Invalid credentials")
         if not user.is_active:
             raise ValueError("Account is inactive")
 
