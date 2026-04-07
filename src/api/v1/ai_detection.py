@@ -212,7 +212,7 @@ async def detect_from_file(
     language: Annotated[
         str,
         Form(description="ru | kk | auto (→ ru); kz accepted as kk"),
-    ] = "auto"
+    ] = "auto",
 ):
     """
     Detect if text in uploaded file is AI-generated or human-written.
