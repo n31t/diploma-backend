@@ -7,11 +7,13 @@ from dishka import Provider, Scope, provide
 from src.core.config import Config
 from src.repositories.auth_repository import AuthRepository
 from src.repositories.ai_detection_repository import AIDetectionRepository
+from src.repositories.subscription_repository import SubscriptionRepository
 from src.services.auth_service import AuthService
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.newspaper_service import NewspaperService
 from src.services.ml_model_service import AIDetectionModelService
 from src.services.ai_detection_service import AIDetectionService
+from src.services.stripe_service import StripeService
 from src.services.telegram_detection_service import TelegramDetectionService
 from src.services.url_detection_service import URLDetectionService
 
@@ -93,3 +95,13 @@ class ServiceProvider(Provider):
         (and therefore the same DB session) as the rest of the request graph.
         """
         return TelegramDetectionService(ai_detection_service)
+
+    @provide(scope=Scope.REQUEST)
+    def get_stripe_service(
+        self,
+        config: Config,
+        subscription_repo: SubscriptionRepository,
+        ai_detection_repo: AIDetectionRepository,
+        auth_repo: AuthRepository,
+    ) -> StripeService:
+        return StripeService(config, subscription_repo, ai_detection_repo, auth_repo)

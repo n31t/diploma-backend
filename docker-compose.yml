@@ -4,6 +4,11 @@ x-backend: &backend_defaults
     context: .
     dockerfile: Dockerfile
 
+x-docker-hosts: &docker_hosts
+  DB_HOST: db
+  DB_PORT: 5432
+  REDIS_HOST: redis
+
 services:
   db:
     image: postgres:16-alpine
@@ -59,33 +64,11 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    env_file: .env
     environment:
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-testing}
-      DB_HOST: db
-      DB_PORT: 5432
-      SECRET_KEY: ${SECRET_KEY}
-      ALGORITHM: ${ALGORITHM:-HS256}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
-      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL}
-      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB}
-      ALLOWED_FILE_EXTENSIONS: ${ALLOWED_FILE_EXTENSIONS}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: ${REDIS_DB:-0}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-10}
-      RATE_LIMIT_PER_HOUR: ${RATE_LIMIT_PER_HOUR:-100}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME}
-      TELEGRAM_CONNECT_TOKEN_TTL_MINUTES: ${TELEGRAM_CONNECT_TOKEN_TTL_MINUTES:-15}
+      <<: *docker_hosts
       ML_API_URL: ${ML_API_URL:-http://ml-api:8000}
       ML_API_URL_KK: ${ML_API_URL_KK:-}
-      DEBUG: ${DEBUG:-false}
       APP_NAME: ${APP_NAME:-Testing}
     depends_on:
       db:
@@ -93,7 +76,7 @@ services:
       redis:
         condition: service_healthy
       ml-api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - app-network
     volumes:
@@ -101,7 +84,7 @@ services:
       - ./alembic:/app/alembic
     command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -112,24 +95,9 @@ services:
     <<: *backend_defaults
     container_name: testing_bot
     restart: unless-stopped
+    env_file: .env
     environment:
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-testing}
-      DB_HOST: db
-      DB_PORT: 5432
-      SECRET_KEY: ${SECRET_KEY}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL}
-      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB}
-      ALLOWED_FILE_EXTENSIONS: ${ALLOWED_FILE_EXTENSIONS}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: ${REDIS_DB:-0}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME}
-      DEBUG: ${DEBUG:-false}
+      <<: *docker_hosts
       APP_NAME: ${APP_NAME:-Testing}
     depends_on:
       db:
@@ -150,18 +118,9 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8000"
+    env_file: .env
     environment:
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-testing}
-      DB_HOST: db
-      DB_PORT: 5432
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: ${REDIS_DB:-0}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      DEBUG: ${DEBUG:-false}
-      SECRET_KEY: ${SECRET_KEY}
+      <<: *docker_hosts
       APP_NAME: ${APP_NAME:-Testing-ML}
       HF_TOKEN: ${HF_TOKEN}
     depends_on:
@@ -173,6 +132,12 @@ services:
       - app-network
     volumes:
       - hf_cache:/app/cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
   frontend:
     build:
@@ -180,6 +145,8 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+    container_name: testing_frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
@@ -187,6 +154,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - app-network
 
 networks:
   app-network:

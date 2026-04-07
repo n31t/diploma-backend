@@ -66,6 +66,7 @@ async def get_user_limits(
             monthly_reset_at=limits.monthly_reset_at,
             total_requests=limits.total_requests,
             is_premium=limits.is_premium,
+            plan_type=limits.plan_type,
             can_make_request=limits.can_make_request
         )
 

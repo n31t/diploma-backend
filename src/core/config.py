@@ -26,6 +26,12 @@ class Config(BaseSettings):
     TELEGRAM_BOT_USERNAME: Optional[str] = None  # e.g. "MyNotifyBot" (without @)
     TELEGRAM_CONNECT_TOKEN_TTL_MINUTES: int = 15
 
+    # Stripe Configuration
+    STRIPE_SECRET_KEY: Optional[str] = None
+    STRIPE_WEBHOOK_SECRET: Optional[str] = None
+    STRIPE_PRICE_ID: Optional[str] = None
+    FRONTEND_URL: str = "http://localhost:3000"
+
     @property
     def db_url(self):
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"

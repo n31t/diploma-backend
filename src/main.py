@@ -17,6 +17,7 @@ from src.api.v1.auth import router as auth_router
 from src.api.v1.ai_detection import router as ai_detection_router
 from src.api.v1.limits import router as limits_router
 from src.api.v1.telegram import router as telegram_router
+from src.api.v1.billing import router as billing_router
 from src.core.config import config, Config
 from src.core.logging import get_logger, setup_logging
 from src.db.database import check_db_connection
@@ -109,3 +110,4 @@ app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(ai_detection_router, prefix="/api/v1", tags=["AI Detection"])
 app.include_router(limits_router, prefix="/api/v1", tags=["User Limits"])
 app.include_router(telegram_router, prefix="/api/v1", tags=["Telegram"])
+app.include_router(billing_router, prefix="/api/v1", tags=["Billing"])

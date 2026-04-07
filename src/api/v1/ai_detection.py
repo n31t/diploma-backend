@@ -135,6 +135,7 @@ async def detect_from_text(
                 monthly_reset_at=limits_dto.monthly_reset_at,
                 total_requests=limits_dto.total_requests,
                 is_premium=limits_dto.is_premium,
+                plan_type=limits_dto.plan_type,
                 can_make_request=limits_dto.can_make_request
             )
         )
@@ -303,6 +304,7 @@ async def detect_from_file(
                 monthly_reset_at=limits_dto.monthly_reset_at,
                 total_requests=limits_dto.total_requests,
                 is_premium=limits_dto.is_premium,
+                plan_type=limits_dto.plan_type,
                 can_make_request=limits_dto.can_make_request
             )
         )
@@ -511,6 +513,7 @@ async def detect_from_url(
             monthly_reset_at=limits_dto.monthly_reset_at,
             total_requests=limits_dto.total_requests,
             is_premium=limits_dto.is_premium,
+            plan_type=limits_dto.plan_type,
             can_make_request=limits_dto.can_make_request,
         ),
     )

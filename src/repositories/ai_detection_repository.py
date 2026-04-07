@@ -9,6 +9,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.ai_detection import AIDetectionHistory, UserLimit
+from src.core.billing import FREE_DAILY_LIMIT, FREE_MONTHLY_LIMIT
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -44,10 +45,10 @@ class AIDetectionRepository:
             now = datetime.now(timezone.utc)
             user_limit = UserLimit(
                 user_id=user_id,
-                daily_limit=100,
+                daily_limit=FREE_DAILY_LIMIT,
                 daily_used=0,
                 daily_reset_at=now + timedelta(days=1),
-                monthly_limit=1000,
+                monthly_limit=FREE_MONTHLY_LIMIT,
                 monthly_used=0,
                 monthly_reset_at=now + timedelta(days=30),
                 total_requests=0,

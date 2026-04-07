@@ -21,6 +21,7 @@ class UserLimitsResponse(BaseModel):
 
     total_requests: int = Field(..., description="Total lifetime requests")
     is_premium: bool = Field(..., description="Whether user has premium status")
+    plan_type: str = Field(..., description="Current plan: 'free' or 'premium'")
     can_make_request: bool = Field(..., description="Whether user can make more requests")
 
     class Config:
@@ -36,6 +37,7 @@ class UserLimitsResponse(BaseModel):
                 "monthly_reset_at": "2025-03-01T00:00:00Z",
                 "total_requests": 523,
                 "is_premium": False,
+                "plan_type": "free",
                 "can_make_request": True
             }
         }

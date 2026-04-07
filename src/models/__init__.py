@@ -13,6 +13,7 @@ from src.models.base import Base
 from src.models.auth import User, RefreshToken, RegistrationToken
 # 2. Dependent models (with foreign keys to User)
 from src.models.ai_detection import AIDetectionHistory, UserLimit
+from src.models.subscription import Subscription
 
 # Export all models
 __all__ = [
@@ -25,4 +26,6 @@ __all__ = [
     # AI Detection
     "AIDetectionHistory",
     "UserLimit",
+    # Billing
+    "Subscription",
 ]

@@ -17,6 +17,11 @@ class User(ULIDMixin, TimestampMixin, Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Stripe integration
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+
     # Telegram integration
     telegram_chat_id: Mapped[Optional[str]] = mapped_column(
         String(50), unique=True, index=True, nullable=True

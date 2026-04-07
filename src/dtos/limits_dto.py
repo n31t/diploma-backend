@@ -20,6 +20,7 @@ class UserLimitDTO:
     monthly_reset_at: datetime
     total_requests: int
     is_premium: bool
+    plan_type: str
     can_make_request: bool
 
     @classmethod
@@ -37,6 +38,7 @@ class UserLimitDTO:
             monthly_reset_at=model.monthly_reset_at,
             total_requests=model.total_requests,
             is_premium=model.is_premium,
+            plan_type="premium" if model.is_premium else "free",
             can_make_request=(
                     model.daily_used < model.daily_limit and
                     model.monthly_used < model.monthly_limit

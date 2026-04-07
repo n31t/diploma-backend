@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.auth_repository import AuthRepository
 from src.repositories.ai_detection_repository import AIDetectionRepository
+from src.repositories.subscription_repository import SubscriptionRepository
 
 
 class RepositoryProvider(Provider):
@@ -19,3 +20,7 @@ class RepositoryProvider(Provider):
     @provide(scope=Scope.REQUEST)
     def get_ai_detection_repository(self, session: AsyncSession) -> AIDetectionRepository:
         return AIDetectionRepository(session)
+
+    @provide(scope=Scope.REQUEST)
+    def get_subscription_repository(self, session: AsyncSession) -> SubscriptionRepository:
+        return SubscriptionRepository(session)

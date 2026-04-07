@@ -460,6 +460,8 @@ class TelegramBotService:
             return
         logger.info("telegram_bot_starting")
         try:
+            await self.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("telegram_webhook_cleared_for_polling")
             await self.dp.start_polling(self.bot, skip_updates=True)
         except asyncio.CancelledError:
             logger.info("telegram_bot_polling_cancelled")
