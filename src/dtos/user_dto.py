@@ -5,7 +5,7 @@ DTOs are used to transfer data between service layer and other layers.
 They are simple dataclasses without validation logic.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -68,3 +68,5 @@ class AuthenticatedUserDTO:
     is_verified: bool
     created_at: datetime
     updated_at: datetime
+    has_password: bool = False
+    auth_providers: list[str] = field(default_factory=list)

@@ -1,6 +1,5 @@
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
-from pydantic import Field
 from typing import Optional
 
 load_dotenv()
@@ -42,6 +41,20 @@ class Config(BaseSettings):
     SMTP_FROM_EMAIL: Optional[str] = None
     SMTP_USE_TLS: bool = True
     SMTP_SSL: bool = False
+
+    # Google Sign-In (authorization code flow; optional)
+    GOOGLE_OAUTH_ENABLED: bool = False
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    # Comma-separated exact redirect_uri values allowed (e.g. postmessage,https://app/callback)
+    GOOGLE_ALLOWED_REDIRECT_URIS: str = ""
+
+    @property
+    def google_allowed_redirect_uri_list(self) -> list[str]:
+        raw = (self.GOOGLE_ALLOWED_REDIRECT_URIS or "").strip()
+        if not raw:
+            return []
+        return [part.strip() for part in raw.split(",") if part.strip()]
 
     @property
     def db_url(self):

@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from src.api.v1.schemas.user import (
     UserRegister,
     UserLogin,
+    GoogleOAuthLoginRequest,
     TokenResponse,
     UserResponse,
     VerifyEmailRequest,
@@ -27,6 +28,7 @@ from src.api.v1.schemas.user import (
     ResetPasswordResponse,
 )
 from src.core.password_reset_error import PasswordResetError
+from src.core.google_oauth_error import GoogleOAuthError
 from src.dtos import UserRegisterDTO, UserLoginDTO, AuthenticatedUserDTO
 from src.services.auth_service import AuthService
 from src.services.shared.auth_helpers import get_authenticated_user_dependency
@@ -171,7 +173,53 @@ async def get_current_user_info(
         username=user.username
     )
 
-    return user
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        has_password=user.has_password,
+        auth_providers=user.auth_providers,
+    )
+
+
+@router.post("/google", response_model=TokenResponse, status_code=status.HTTP_200_OK)
+async def google_oauth_login(
+    body: GoogleOAuthLoginRequest,
+    request: Request,
+    service: FromDishka[AuthService],
+):
+    """
+    Sign in with Google using an authorization code from the frontend.
+    Returns the same token pair as email/password login.
+    """
+    try:
+        user_agent = request.headers.get("user-agent")
+        ip_address = request.client.host if request.client else None
+        return await service.login_with_google_code(
+            code=body.code,
+            redirect_uri=body.redirect_uri,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+    except GoogleOAuthError as e:
+        logger.warning("google_oauth_failed", code=e.code)
+        return JSONResponse(
+            status_code=e.http_status,
+            content={"detail": e.message, "code": e.code},
+        )
+    except Exception as e:
+        logger.error(
+            "google_oauth_error",
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google sign-in failed",
+        )
 
 
 @router.post(

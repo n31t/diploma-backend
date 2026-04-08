@@ -4,13 +4,14 @@ Authentication repository for database operations.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.auth import User, RefreshToken, RegistrationToken, PasswordResetToken
+from src.models.auth import User, RefreshToken, RegistrationToken, PasswordResetToken, OAuthAccount
 
 
 class AuthRepository:
@@ -61,7 +62,7 @@ class AuthRepository:
         self,
         username: str,
         email: str,
-        hashed_password: str,
+        hashed_password: Optional[str],
         *,
         is_verified: bool = False,
     ) -> User:
@@ -71,7 +72,7 @@ class AuthRepository:
         Args:
             username: User's username
             email: User's email
-            hashed_password: Bcrypt hashed password
+            hashed_password: Bcrypt hash, or None for OAuth-only accounts
             is_verified: Email confirmation flag (default False for self-registration)
 
         Returns:
@@ -328,3 +329,87 @@ class AuthRepository:
             .values(is_revoked=True)
         )
         await self.session.flush()
+
+    # ── OAuth ──────────────────────────────────────────────────────────────
+
+    async def get_oauth_account(
+        self, provider: str, provider_user_id: str
+    ) -> Optional[OAuthAccount]:
+        result = await self.session.execute(
+            select(OAuthAccount).where(
+                OAuthAccount.provider == provider,
+                OAuthAccount.provider_user_id == provider_user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_google_oauth_for_user(self, user_id: str) -> Optional[OAuthAccount]:
+        result = await self.session.execute(
+            select(OAuthAccount).where(
+                OAuthAccount.user_id == user_id,
+                OAuthAccount.provider == "google",
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_oauth_providers_for_user(self, user_id: str) -> list[str]:
+        result = await self.session.execute(
+            select(OAuthAccount.provider)
+            .where(OAuthAccount.user_id == user_id)
+            .distinct()
+        )
+        return [row[0] for row in result.all()]
+
+    async def create_oauth_account(
+        self,
+        user_id: str,
+        provider: str,
+        provider_user_id: str,
+        email: str,
+    ) -> OAuthAccount:
+        row = OAuthAccount(
+            user_id=user_id,
+            provider=provider,
+            provider_user_id=provider_user_id,
+            email=email,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        await self.session.refresh(row)
+        return row
+
+    async def generate_unique_username_from_email(
+        self,
+        email: str,
+        display_name: Optional[str] = None,
+    ) -> str:
+        """Build a username matching UserRegister rules; append numeric suffix on collision."""
+        base: Optional[str] = None
+        if display_name and display_name.strip():
+            raw = re.sub(r"[^a-zA-Z0-9_-]+", "_", display_name.strip()).strip("_")
+            if raw and re.match(r"^[a-zA-Z0-9_-]+$", raw):
+                base = raw[:50]
+        if not base:
+            local = email.split("@", 1)[0]
+            raw = re.sub(r"[^a-zA-Z0-9_-]+", "_", local).strip("_")
+            if not raw:
+                raw = "user"
+            base = raw[:50]
+        if len(base) < 3:
+            base = (base + "_usr")[:50]
+        base = base[:50]
+        counter = 0
+        while True:
+            if counter == 0:
+                candidate = base
+            else:
+                suffix = str(counter)
+                max_base = 50 - len(suffix)
+                candidate = (base[:max_base] + suffix) if max_base > 0 else suffix[-50:]
+            if len(candidate) > 50:
+                candidate = candidate[:50]
+            if not await self.get_user_by_username(candidate):
+                return candidate
+            counter += 1
+            if counter > 10_000:
+                raise RuntimeError("Could not allocate unique username")

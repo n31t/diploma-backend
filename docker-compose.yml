@@ -145,6 +145,8 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        # Baked into the client at build time; use NEXT_PUBLIC_* or fall back to backend GOOGLE_CLIENT_ID
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     container_name: testing_frontend
     restart: unless-stopped
     ports:

@@ -86,6 +86,14 @@ async def _build_authenticated_user_dto(
                 detail="Inactive user account",
             )
 
+        oauth_providers = await auth_repository.list_oauth_providers_for_user(
+            user_model.id
+        )
+        auth_provider_set = set(oauth_providers)
+        if user_model.hashed_password:
+            auth_provider_set.add("password")
+        auth_providers_sorted = sorted(auth_provider_set)
+
         user_dto = AuthenticatedUserDTO(
             id=user_model.id,
             username=user_model.username,
@@ -94,6 +102,8 @@ async def _build_authenticated_user_dto(
             is_verified=user_model.is_verified,
             created_at=user_model.created_at,
             updated_at=user_model.updated_at,
+            has_password=user_model.hashed_password is not None,
+            auth_providers=auth_providers_sorted,
         )
 
         logger.debug(

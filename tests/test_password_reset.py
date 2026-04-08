@@ -36,8 +36,13 @@ def mock_email():
 
 
 @pytest.fixture
-def auth_service(mock_repo, mock_config, mock_email):
-    return AuthService(mock_repo, mock_config, mock_email)
+def mock_google_oauth():
+    return AsyncMock()
+
+
+@pytest.fixture
+def auth_service(mock_repo, mock_config, mock_email, mock_google_oauth):
+    return AuthService(mock_repo, mock_config, mock_email, mock_google_oauth)
 
 
 def _future_row(**overrides):

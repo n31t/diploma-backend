@@ -9,6 +9,7 @@ from src.repositories.auth_repository import AuthRepository
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.repositories.subscription_repository import SubscriptionRepository
 from src.services.auth_service import AuthService
+from src.services.google_oauth_client import GoogleOAuthClient
 from src.services.email_service import EmailService
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.newspaper_service import NewspaperService
@@ -22,14 +23,21 @@ from src.services.url_detection_service import URLDetectionService
 class ServiceProvider(Provider):
     """Provider for service dependencies."""
 
+    @provide(scope=Scope.APP)
+    def get_google_oauth_client(self, config: Config) -> GoogleOAuthClient:
+        return GoogleOAuthClient(config)
+
     @provide(scope=Scope.REQUEST)
     def get_auth_service(
         self,
         auth_repository: AuthRepository,
         config: Config,
         email_service: EmailService,
+        google_oauth_client: GoogleOAuthClient,
     ) -> AuthService:
-        return AuthService(auth_repository, config, email_service)
+        return AuthService(
+            auth_repository, config, email_service, google_oauth_client
+        )
 
     # ── Stateless singletons (APP scope) ──────────────────────────────────
 

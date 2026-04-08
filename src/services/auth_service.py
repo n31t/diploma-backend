@@ -12,6 +12,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src.core.config import Config
+from src.core.google_oauth_error import (
+    GoogleOAuthError,
+    ACCOUNT_INACTIVE,
+    GOOGLE_EMAIL_NOT_VERIFIED,
+    GOOGLE_OAUTH_DISABLED,
+    GOOGLE_OAUTH_NOT_CONFIGURED,
+    INVALID_REDIRECT_URI,
+    OAUTH_ACCOUNT_CONFLICT,
+)
 from src.core.logging import get_logger
 from src.core.password_policy import validate_password_strength
 from src.core.password_reset_error import (
@@ -34,8 +43,11 @@ from src.dtos.telegram_dto import TelegramConnectDTO, TelegramStatusDTO
 from src.models.auth import User
 from src.repositories.auth_repository import AuthRepository
 from src.services.email_service import EmailService
+from src.services.google_oauth_client import GoogleOAuthClient, GoogleOAuthProfile
 
 logger = get_logger(__name__)
+
+PROVIDER_GOOGLE = "google"
 
 
 class AuthService:
@@ -46,10 +58,12 @@ class AuthService:
         auth_repository: AuthRepository,
         config: Config,
         email_service: EmailService,
+        google_oauth_client: GoogleOAuthClient,
     ):
         self.auth_repository = auth_repository
         self.config = config
         self.email_service = email_service
+        self.google_oauth_client = google_oauth_client
 
     async def register_user(
         self,
@@ -73,21 +87,8 @@ class AuthService:
         )
         await self._send_new_verification_email(user)
 
-        access_token = create_access_token(
-            data={"sub": str(user.id), "username": user.username},
-            config=self.config,
-        )
-        refresh_token = generate_refresh_token()
-        await self.auth_repository.create_refresh_token(
-            user_id=user.id,
-            token=refresh_token,
-            expires_days=self.config.REFRESH_TOKEN_EXPIRE_DAYS,
-            user_agent=user_agent,
-            ip_address=ip_address,
-        )
-
         logger.info("user_registered_successfully", user_id=user.id, username=user.username)
-        return TokenDTO(access_token=access_token, refresh_token=refresh_token)
+        return await self._issue_session_tokens(user, user_agent, ip_address)
 
     async def login_user(
         self,
@@ -109,6 +110,15 @@ class AuthService:
         if not user.is_active:
             raise ValueError("Account is inactive")
 
+        logger.info("login_successful", user_id=user.id, username=user.username)
+        return await self._issue_session_tokens(user, user_agent, ip_address)
+
+    async def _issue_session_tokens(
+        self,
+        user: User,
+        user_agent: Optional[str],
+        ip_address: Optional[str],
+    ) -> TokenDTO:
         access_token = create_access_token(
             data={"sub": str(user.id), "username": user.username},
             config=self.config,
@@ -121,9 +131,117 @@ class AuthService:
             user_agent=user_agent,
             ip_address=ip_address,
         )
-
-        logger.info("login_successful", user_id=user.id, username=user.username)
         return TokenDTO(access_token=access_token, refresh_token=refresh_token)
+
+    async def login_with_google_code(
+        self,
+        code: str,
+        redirect_uri: str,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> TokenDTO:
+        if not self.config.GOOGLE_OAUTH_ENABLED:
+            raise GoogleOAuthError(
+                GOOGLE_OAUTH_DISABLED,
+                "Google sign-in is disabled",
+                http_status=503,
+            )
+        cid = (self.config.GOOGLE_CLIENT_ID or "").strip()
+        secret = (self.config.GOOGLE_CLIENT_SECRET or "").strip()
+        if not cid or not secret:
+            raise GoogleOAuthError(
+                GOOGLE_OAUTH_NOT_CONFIGURED,
+                "Google OAuth is not configured",
+            )
+        allowed = self.config.google_allowed_redirect_uri_list
+        if not allowed:
+            raise GoogleOAuthError(
+                GOOGLE_OAUTH_NOT_CONFIGURED,
+                "No allowed OAuth redirect URIs configured",
+            )
+        uri = redirect_uri.strip()
+        if uri not in allowed:
+            raise GoogleOAuthError(
+                INVALID_REDIRECT_URI,
+                "Redirect URI is not allowed",
+            )
+
+        profile = await self.google_oauth_client.exchange_code_for_profile(
+            code=code.strip(),
+            redirect_uri=uri,
+        )
+        if not profile.email_verified:
+            raise GoogleOAuthError(
+                GOOGLE_EMAIL_NOT_VERIFIED,
+                "Google email is not verified",
+            )
+
+        user = await self._resolve_user_for_google_profile(profile)
+        if not user.is_active:
+            raise GoogleOAuthError(
+                ACCOUNT_INACTIVE,
+                "Account is inactive",
+                http_status=403,
+            )
+
+        logger.info("google_login_successful", user_id=user.id)
+        return await self._issue_session_tokens(user, user_agent, ip_address)
+
+    async def _resolve_user_for_google_profile(self, profile: GoogleOAuthProfile) -> User:
+        existing_link = await self.auth_repository.get_oauth_account(
+            PROVIDER_GOOGLE, profile.sub
+        )
+        if existing_link:
+            user = await self.auth_repository.get_user_by_id(existing_link.user_id)
+            if not user:
+                raise GoogleOAuthError(
+                    OAUTH_ACCOUNT_CONFLICT,
+                    "OAuth account is orphaned",
+                )
+            return user
+
+        existing_user = await self.auth_repository.get_user_by_email_case_insensitive(
+            profile.email
+        )
+        if existing_user:
+            google_row = await self.auth_repository.get_google_oauth_for_user(
+                existing_user.id
+            )
+            if google_row and google_row.provider_user_id != profile.sub:
+                raise GoogleOAuthError(
+                    OAUTH_ACCOUNT_CONFLICT,
+                    "This email is already linked to a different Google account",
+                )
+            if not google_row:
+                await self.auth_repository.create_oauth_account(
+                    user_id=existing_user.id,
+                    provider=PROVIDER_GOOGLE,
+                    provider_user_id=profile.sub,
+                    email=profile.email,
+                )
+            if profile.email_verified and not existing_user.is_verified:
+                await self.auth_repository.set_user_verified(existing_user.id)
+            user = await self.auth_repository.get_user_by_id(existing_user.id)
+            assert user is not None
+            return user
+
+        username = await self.auth_repository.generate_unique_username_from_email(
+            profile.email,
+            display_name=profile.name,
+        )
+        user = await self.auth_repository.create_user(
+            username=username,
+            email=profile.email,
+            hashed_password=None,
+            is_verified=True,
+        )
+        await self.auth_repository.create_oauth_account(
+            user_id=user.id,
+            provider=PROVIDER_GOOGLE,
+            provider_user_id=profile.sub,
+            email=profile.email,
+        )
+        return user
 
     async def verify_email_with_token(self, token: str) -> None:
         row = await self.auth_repository.get_valid_verification_token_by_value(token)

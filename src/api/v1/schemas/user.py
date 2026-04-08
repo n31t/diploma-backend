@@ -52,9 +52,23 @@ class UserResponse(BaseModel):
     email: str
     is_active: bool
     is_verified: bool
+    has_password: bool = False
+    auth_providers: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
+
+
+class GoogleOAuthLoginRequest(BaseModel):
+    """Authorization code from Google Identity Services (web) plus exact redirect_uri."""
+
+    code: str = Field(..., min_length=1, max_length=4096)
+    redirect_uri: str = Field(..., min_length=1, max_length=2048)
+
+    @field_validator("code", "redirect_uri")
+    @classmethod
+    def strip_ws(cls, v: str) -> str:
+        return v.strip()
 
 
 class VerifyEmailRequest(BaseModel):

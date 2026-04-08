@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     String,
     DateTime,
+    UniqueConstraint,
 )
 from datetime import datetime
 from typing import Optional
@@ -14,7 +15,7 @@ class User(ULIDMixin, TimestampMixin, Base):
 
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -53,6 +54,20 @@ class RefreshToken(ULIDMixin, TimestampMixin, Base):
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv6 support
+
+
+class OAuthAccount(ULIDMixin, TimestampMixin, Base):
+    """External identity provider link (e.g. Google)."""
+
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_subject"),
+    )
+
+    user_id: Mapped[str] = mapped_column(String(26), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
 
 
 class PasswordResetToken(ULIDMixin, TimestampMixin, Base):

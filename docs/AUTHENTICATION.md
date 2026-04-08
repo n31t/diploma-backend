@@ -4,7 +4,7 @@
 
 ## Границы системы
 
-- **Входит:** учётные записи с паролем, bcrypt, JWT access, запись refresh в БД, заголовок `Authorization: Bearer`.
+- **Входит:** учётные записи с паролем и/или **Google OAuth**, bcrypt (если пароль задан), JWT access, запись refresh в БД, заголовок `Authorization: Bearer`.
 - **Не является отдельным способом «логина»:** привязка Telegram (`AuthService` + `GET/POST` в `src/api/v1/telegram.py`). Пользователь уже должен быть аутентифицирован (Bearer); бот лишь связывает `telegram_chat_id` с существующим пользователем.
 
 ---
@@ -23,6 +23,7 @@
 | `POST` | `/api/v1/auth/forgot-password` | Запрос ссылки сброса пароля (публичный; ответ всегда одинаковый) |
 | `POST` | `/api/v1/auth/reset-password/validate` | Проверка одноразового токена сброса (публичный) |
 | `POST` | `/api/v1/auth/reset-password` | Установка нового пароля по токену (публичный) |
+| `POST` | `/api/v1/auth/google` | Вход через Google (authorization code + `redirect_uri`; публичный) |
 
 ### POST `/api/v1/auth/register`
 
@@ -49,8 +50,22 @@
 ### GET `/api/v1/auth/me`
 
 - **Заголовок:** `Authorization: Bearer <access_token>`.
-- **Ответ 200:** `UserResponse` — `id` (ULID), `username`, `email`, `is_active`, `is_verified`.
+- **Ответ 200:** `UserResponse` — `id` (ULID), `username`, `email`, `is_active`, `is_verified`, `has_password`, `auth_providers` (например `["password"]`, `["google"]` или оба).
 - Ошибки авторизации — как в разделе [Защита эндпоинтов](#защита-эндпоинтов).
+
+### POST `/api/v1/auth/google`
+
+- **Тело:** `GoogleOAuthLoginRequest` — `code` (authorization code от Google), `redirect_uri` (должен **точно** совпадать с одним из значений в `GOOGLE_ALLOWED_REDIRECT_URIS`; для фронта с `@react-oauth/google` в режиме auth-code обычно `postmessage`).
+- **Ответ 200:** `TokenResponse`, как у `/login`.
+- **400 / 403 / 503:** JSON `{"detail": "...", "code": "..."}` — коды: `GOOGLE_OAUTH_DISABLED`, `GOOGLE_OAUTH_NOT_CONFIGURED`, `INVALID_REDIRECT_URI`, `INVALID_GOOGLE_CODE`, `GOOGLE_EMAIL_NOT_VERIFIED`, `OAUTH_ACCOUNT_CONFLICT`, `ACCOUNT_INACTIVE` (неактивный пользователь — 403).
+
+**Политика связывания аккаунтов:**
+
+1. Если есть строка в `oauth_accounts` с `provider=google` и `provider_user_id=sub` из токена — вход в привязанного пользователя.
+2. Иначе, если локальный пользователь с тем же email (без учёта регистра) уже есть: при отсутствии другой привязки Google создаётся запись `oauth_accounts`; если у пользователя уже другой `sub` Google — ошибка `OAUTH_ACCOUNT_CONFLICT`. Если Google подтвердил email, а локальный `is_verified=false`, выставляется `is_verified=true`.
+3. Иначе создаётся новый пользователь с `hashed_password=NULL`, уникальным `username` (генерация из email/имени), `is_verified=true`, и строка в `oauth_accounts`.
+
+Парольный логин для пользователя без пароля даёт «Invalid credentials». Сброс пароля может выставить первый пароль для такого аккаунта.
 
 ### POST `/api/v1/auth/verify-email`
 
@@ -133,11 +148,13 @@
 
 Модель `User` (`src/models/auth.py`):
 
-- Обязательные для логина по паролю: `username`, `email` (уникальные индексы), `hashed_password`, `is_active` (по умолчанию `True` при создании в репозитории).
+- Обязательные поля: `username`, `email` (уникальные индексы), `is_active` (по умолчанию `True` при создании в репозитории). Поле `hashed_password` может быть **NULL** для аккаунтов только через Google; тогда вход только через Google (или после установки пароля через сброс).
 - **`is_verified`:** подтверждение email; при самостоятельной регистрации выставляется `False`, доступ к «ядру» API (см. ниже) до подтверждения закрыт зависимостью `require_verified_user`.
 - Прочее: `stripe_customer_id`, поля Telegram (`telegram_chat_id`, одноразовый `telegram_connect_token` и срок).
 
-**Для будущих планов (ещё нет в модели):** идентификатор внешнего провайдера (Google OAuth), отдельная таблица OAuth-связей.
+### `oauth_accounts`
+
+Связь локального пользователя с внешним провайдером: `user_id`, `provider` (например `google`), `provider_user_id` (Google `sub`), снимок `email`. Уникальность `(provider, provider_user_id)`.
 
 ### `registration_tokens`
 
@@ -197,7 +214,7 @@
 | DI-зависимость «текущий пользователь» | `src/services/shared/auth_helpers.py` |
 | Неиспользуемый дублирующий Depends | `src/core/dependencies.py` |
 
-Поток: **схема API** → DTO → **AuthService** → **AuthRepository** → **User / RefreshToken / RegistrationToken / PasswordResetToken**; токены выдаются через **security**; верификация и сброс пароля вызывают **EmailService**.
+Поток: **схема API** → DTO → **AuthService** → **AuthRepository** → **User / OAuthAccount / RefreshToken / RegistrationToken / PasswordResetToken**; токены выдаются через **security**; верификация и сброс пароля вызывают **EmailService**; Google — **GoogleOAuthClient** (`src/services/google_oauth_client.py`).
 
 ---
 
@@ -218,6 +235,10 @@
 | `SMTP_FROM_EMAIL` | Заголовок `From` | по умолчанию `SMTP_USER` |
 | `SMTP_USE_TLS` | STARTTLS после подключения (типично порт 587) | `true` |
 | `SMTP_SSL` | Неявный TLS с начала соединения (порт 465) | `false` |
+| `GOOGLE_OAUTH_ENABLED` | Включить `POST /auth/google` | `false` |
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID (Google Cloud) | пусто |
+| `GOOGLE_CLIENT_SECRET` | Client secret | пусто |
+| `GOOGLE_ALLOWED_REDIRECT_URIS` | Допустимые `redirect_uri` через запятую (точное совпадение) | например `postmessage` |
 
 Остальные переменные БД (`DB_*`) нужны для пользователей и refresh-записей.
 
@@ -226,6 +247,8 @@
 Миграция `c8d2e9f1a3b4_email_verification`: колонка `users.is_verified`, переименование `registration_tokens.created_by` → `user_id`, индекс по `user_id`. Существующие на момент миграции пользователи получают `is_verified=true` (не блокируются).
 
 Миграция `d4e5f6a7b8c9_password_reset_tokens`: таблица `password_reset_tokens`.
+
+Миграция `e7f8a9b0c1d2_oauth_accounts`: таблица `oauth_accounts`, колонка `users.hashed_password` становится nullable.
 
 ---
 
@@ -263,8 +286,7 @@ sequenceDiagram
 
 ## Зачатки для следующих задач
 
-1. **Google OAuth:** конфигурация OAuth-клиента, callback, связка с `User`, политика слияния по email.
-2. **Refresh HTTP-flow:** обмен refresh на новый access, эндпоинт вида `POST /api/v1/auth/refresh`.
-3. **Почта:** при наличии `SMTP_HOST` используется `SmtpEmailService` (`build_email_service` в `src/services/email_service.py`).
+1. **Refresh HTTP-flow:** обмен refresh на новый access, эндпоинт вида `POST /api/v1/auth/refresh`.
+2. **Почта:** при наличии `SMTP_HOST` используется `SmtpEmailService` (`build_email_service` в `src/services/email_service.py`).
 
 Интеграция с фронтендом: репозиторий `diploma-front` (маршруты `/verify-email`, `/check-email`, баннер в дашборде). Краткий контракт: [docs/FRONTEND_EMAIL_VERIFICATION.md](FRONTEND_EMAIL_VERIFICATION.md).

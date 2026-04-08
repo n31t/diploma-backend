@@ -36,17 +36,19 @@ def hash_password(password: str) -> str:
     return hashed.decode('utf-8')
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(plain_password: str, hashed_password: str | None) -> bool:
     """
     Verify a password against a hash.
 
     Args:
         plain_password: Plain text password
-        hashed_password: Hashed password to compare against
+        hashed_password: Bcrypt hash, or None for OAuth-only accounts
 
     Returns:
         True if password matches, False otherwise
     """
+    if not hashed_password:
+        return False
     try:
         password_bytes = plain_password.encode('utf-8')
         hashed_bytes = hashed_password.encode('utf-8')
