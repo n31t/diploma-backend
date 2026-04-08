@@ -13,11 +13,20 @@ from typing import Optional
 
 from src.core.config import Config
 from src.core.logging import get_logger
+from src.core.password_policy import validate_password_strength
+from src.core.password_reset_error import (
+    PasswordResetError,
+    RESET_TOKEN_EXPIRED,
+    RESET_TOKEN_INVALID,
+    RESET_TOKEN_USED,
+)
 from src.core.security import (
     create_access_token,
+    generate_password_reset_token,
     generate_refresh_token,
     generate_verification_token,
     hash_password,
+    hash_password_reset_token,
     verify_password,
 )
 from src.dtos import UserLoginDTO, UserRegisterDTO, TokenDTO
@@ -155,6 +164,69 @@ class AuthService:
             token=raw,
             username=user.username,
         )
+
+    async def request_password_reset(self, email: str) -> None:
+        """Queue reset email if the user exists; same outcome for unknown emails (no enumeration)."""
+        logger.info("password_reset_requested")
+        user = await self.auth_repository.get_user_by_email_case_insensitive(email)
+        if not user:
+            return
+        await self.auth_repository.invalidate_unused_password_reset_tokens_for_user(
+            user.id
+        )
+        raw = generate_password_reset_token()
+        token_hash = hash_password_reset_token(raw)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=self.config.PASSWORD_RESET_TOKEN_EXPIRE_HOURS
+        )
+        await self.auth_repository.create_password_reset_token(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+        await self.email_service.send_password_reset_email(
+            to=user.email,
+            token=raw,
+            username=user.username,
+        )
+
+    async def validate_password_reset_token(
+        self, raw_token: str
+    ) -> tuple[bool, str | None]:
+        """
+        Return (True, None) if the token is valid, else (False, error_code).
+        Does not reveal whether an email exists in the system.
+        """
+        token_hash = hash_password_reset_token(raw_token.strip())
+        row = await self.auth_repository.get_password_reset_token_by_hash(token_hash)
+        if not row:
+            return False, RESET_TOKEN_INVALID
+        if row.is_used:
+            return False, RESET_TOKEN_USED
+        now = datetime.now(timezone.utc)
+        if row.expires_at <= now:
+            return False, RESET_TOKEN_EXPIRED
+        return True, None
+
+    async def reset_password(self, raw_token: str, new_password: str) -> None:
+        token_hash = hash_password_reset_token(raw_token.strip())
+        row = await self.auth_repository.get_password_reset_token_by_hash(token_hash)
+        if not row:
+            raise PasswordResetError(RESET_TOKEN_INVALID, "Invalid or unknown reset token")
+        if row.is_used:
+            raise PasswordResetError(RESET_TOKEN_USED, "This reset link has already been used")
+        now = datetime.now(timezone.utc)
+        if row.expires_at <= now:
+            raise PasswordResetError(RESET_TOKEN_EXPIRED, "This reset link has expired")
+        validate_password_strength(new_password)
+        hashed = hash_password(new_password)
+        await self.auth_repository.update_user_password_hash(row.user_id, hashed)
+        await self.auth_repository.mark_password_reset_token_used(row.id)
+        await self.auth_repository.invalidate_unused_password_reset_tokens_for_user(
+            row.user_id
+        )
+        await self.auth_repository.revoke_all_refresh_tokens_for_user(row.user_id)
+        logger.info("password_reset_completed", user_id=row.user_id)
 
     # ── Telegram ────────────────────────────────────────────────────────────
 

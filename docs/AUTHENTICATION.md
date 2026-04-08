@@ -20,6 +20,9 @@
 | `GET` | `/api/v1/auth/me` | Текущий пользователь (требует Bearer) |
 | `POST` | `/api/v1/auth/verify-email` | Подтверждение email по одноразовому токену (публичный) |
 | `POST` | `/api/v1/auth/resend-verification` | Повторная отправка ссылки (Bearer) |
+| `POST` | `/api/v1/auth/forgot-password` | Запрос ссылки сброса пароля (публичный; ответ всегда одинаковый) |
+| `POST` | `/api/v1/auth/reset-password/validate` | Проверка одноразового токена сброса (публичный) |
+| `POST` | `/api/v1/auth/reset-password` | Установка нового пароля по токену (публичный) |
 
 ### POST `/api/v1/auth/register`
 
@@ -62,6 +65,24 @@
 - **Ответ 204:** письмо поставлено в очередь (в dev — запись в лог).
 - **400:** уже подтверждён (`Email already verified`) или иные ошибки валидации.
 
+### POST `/api/v1/auth/forgot-password`
+
+- **Тело:** `{"email": "..."}` — схема `ForgotPasswordRequest`.
+- **Ответ 200:** всегда одно и то же тело (`ForgotPasswordResponse`: `status`, нейтральное `message`), независимо от того, зарегистрирован ли email. Это снижает перечисление аккаунтов.
+- **Поведение:** при существующем пользователе (поиск email без учёта регистра) старые неиспользованные токены сброса помечаются использованными, создаётся новая запись в `password_reset_tokens` (в БД хранится только SHA-256 hex от сырого токена), отправляется письмо со ссылкой `{FRONTEND_URL}/reset-password?token=...`.
+
+### POST `/api/v1/auth/reset-password/validate`
+
+- **Тело:** `{"token": "..."}` — как в query ссылки (обрезка пробелов по краям).
+- **Ответ 200:** `{"valid": true}` или `{"valid": false, "code": "RESET_TOKEN_INVALID" | "RESET_TOKEN_USED" | "RESET_TOKEN_EXPIRED"}`. Коды не раскрывают наличие пользователя.
+
+### POST `/api/v1/auth/reset-password`
+
+- **Тело:** `token`, `password` — сила пароля как при регистрации (`src/core/password_policy.py`).
+- **Ответ 200:** `{"status": "ok"}`.
+- **400:** тело JSON `{"detail": "<сообщение>", "code": "<код>"}` (не стандартный FastAPI `HTTPException` для этого маршрута), те же коды, что и при `valid: false` на validate.
+- После успеха: обновляется `users.hashed_password`, токен сброса помечается использованным, прочие неиспользованные токены сброса пользователя инвалидируются, все неотозванные `refresh_tokens` пользователя помечаются `is_revoked=true`.
+
 ### Refresh по HTTP
 
 В docstring модуля `src/api/v1/auth.py` упоминается «token refresh», но **эндпоинта обмена refresh на новый access нет**. При каждом успешном `register` и `login` в БД создаётся новая строка refresh; клиент получает пару токенов в теле ответа, дальнейшее использование refresh в API не реализовано.
@@ -103,7 +124,7 @@
 ## Пароли
 
 - Хэширование и проверка: **bcrypt** — `hash_password` / `verify_password` в `src/core/security.py`.
-- Сложность пароля на **регистрации** задаётся только схемой `UserRegister` (см. выше).
+- Сложность пароля на **регистрации** и **сбросе пароля** — общая функция `validate_password_strength` в `src/core/password_policy.py` (вызывается из схем Pydantic `UserRegister`, `ResetPasswordRequest`).
 - На **логине** схема ослабляет проверку длины пароля; фактическая проверка — `verify_password` против `user.hashed_password`.
 
 ---
@@ -121,6 +142,10 @@
 ### `registration_tokens`
 
 Одноразовые токены подтверждения email: `token`, `user_id`, `expires_at`, `is_used`. Срок жизни задаётся `EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS` в конфиге. После успешной верификации токен помечается `is_used=true`. При повторной отправке письма неиспользованные токены пользователя инвалидируются (`is_used=true`).
+
+### `password_reset_tokens`
+
+Одноразовые ссылки сброса пароля: `token_hash` (SHA-256 hex от сырого токена из письма, **сырое значение в БД не хранится**), `user_id`, `expires_at`, `is_used`. Срок — `PASSWORD_RESET_TOKEN_EXPIRE_HOURS`. При новом запросе сброса неиспользованные строки пользователя помечаются использованными. После успешной смены пароля текущий токен помечается использованным; дополнительно инвалидируются прочие неиспользованные токены сброса этого пользователя.
 
 ---
 
@@ -166,13 +191,13 @@
 | Бизнес-логика | `src/services/auth_service.py` |
 | Доступ к БД | `src/repositories/auth_repository.py` |
 | Модели SQLAlchemy | `src/models/auth.py` |
-| JWT и пароли | `src/core/security.py` |
+| JWT и пароли | `src/core/security.py`, `src/core/password_policy.py` |
 | Конфиг (JWT, длительности) | `src/core/config.py` |
-| Письма (верификация) | `src/services/email_service.py`, провайдер `src/ioc/email_provider.py` |
+| Письма (верификация и сброс пароля) | `src/services/email_service.py`, провайдер `src/ioc/email_provider.py` |
 | DI-зависимость «текущий пользователь» | `src/services/shared/auth_helpers.py` |
 | Неиспользуемый дублирующий Depends | `src/core/dependencies.py` |
 
-Поток: **схема API** → DTO → **AuthService** → **AuthRepository** → **User / RefreshToken / RegistrationToken**; токены выдаются через **security**; верификация вызывает **EmailService**.
+Поток: **схема API** → DTO → **AuthService** → **AuthRepository** → **User / RefreshToken / RegistrationToken / PasswordResetToken**; токены выдаются через **security**; верификация и сброс пароля вызывают **EmailService**.
 
 ---
 
@@ -185,6 +210,7 @@
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Жизнь access | `30` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Срок refresh в БД | `7` |
 | `EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS` | Срок одноразового токена в `registration_tokens` | `48` |
+| `PASSWORD_RESET_TOKEN_EXPIRE_HOURS` | Срок одноразового токена в `password_reset_tokens` | `24` |
 | `FRONTEND_URL` | Базовый URL для ссылки в письме верификации | `http://localhost:3000` |
 | `SMTP_HOST` | Если задан (непустой), письма идут через **SMTP** (`SmtpEmailService`) | пусто → только лог (`LoggingEmailService`) |
 | `SMTP_PORT` | Порт SMTP | `587` (STARTTLS) или `465` (SSL) |
@@ -198,6 +224,8 @@
 В **проде** задайте `FRONTEND_URL` на публичный URL фронтенда и непустой `SMTP_HOST`; при `DEBUG=false` без SMTP в лог пишется предупреждение `email_using_logging_backend`.
 
 Миграция `c8d2e9f1a3b4_email_verification`: колонка `users.is_verified`, переименование `registration_tokens.created_by` → `user_id`, индекс по `user_id`. Существующие на момент миграции пользователи получают `is_verified=true` (не блокируются).
+
+Миграция `d4e5f6a7b8c9_password_reset_tokens`: таблица `password_reset_tokens`.
 
 ---
 

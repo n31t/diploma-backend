@@ -7,10 +7,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.auth import User, RefreshToken, RegistrationToken
+from src.models.auth import User, RefreshToken, RegistrationToken, PasswordResetToken
 
 
 class AuthRepository:
@@ -46,6 +46,14 @@ class AuthRepository:
         """
         result = await self.session.execute(
             select(User).where(User.email == email)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_user_by_email_case_insensitive(self, email: str) -> Optional[User]:
+        """Match email with trim + case-insensitive comparison (for forgot-password)."""
+        key = email.strip().lower()
+        result = await self.session.execute(
+            select(User).where(func.lower(User.email) == key)
         )
         return result.scalar_one_or_none()
 
@@ -248,3 +256,75 @@ class AuthRepository:
         await self.session.flush()
         await self.session.refresh(user)
         return user
+
+    # ── Password reset ─────────────────────────────────────────────────────
+
+    async def create_password_reset_token(
+        self,
+        user_id: str,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> PasswordResetToken:
+        row = PasswordResetToken(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            is_used=False,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        await self.session.refresh(row)
+        return row
+
+    async def get_password_reset_token_by_hash(
+        self, token_hash: str
+    ) -> Optional[PasswordResetToken]:
+        result = await self.session.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_hash
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def invalidate_unused_password_reset_tokens_for_user(
+        self, user_id: str
+    ) -> None:
+        await self.session.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == user_id,
+                PasswordResetToken.is_used.is_(False),
+            )
+            .values(is_used=True)
+        )
+        await self.session.flush()
+
+    async def mark_password_reset_token_used(self, token_id: str) -> None:
+        await self.session.execute(
+            update(PasswordResetToken)
+            .where(PasswordResetToken.id == token_id)
+            .values(is_used=True)
+        )
+        await self.session.flush()
+
+    async def update_user_password_hash(
+        self, user_id: str, hashed_password: str
+    ) -> Optional[User]:
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        user.hashed_password = hashed_password
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
+
+    async def revoke_all_refresh_tokens_for_user(self, user_id: str) -> None:
+        await self.session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.is_revoked.is_(False),
+            )
+            .values(is_revoked=True)
+        )
+        await self.session.flush()

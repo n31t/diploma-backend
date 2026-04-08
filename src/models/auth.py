@@ -53,3 +53,14 @@ class RefreshToken(ULIDMixin, TimestampMixin, Base):
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv6 support
+
+
+class PasswordResetToken(ULIDMixin, TimestampMixin, Base):
+    """One-time password reset link; stores SHA-256 hex of the raw token only."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[str] = mapped_column(String(26), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_used: Mapped[bool] = mapped_column(Boolean, default=False)

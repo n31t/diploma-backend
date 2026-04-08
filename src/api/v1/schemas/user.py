@@ -1,6 +1,8 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 import re
 
+from src.core.password_policy import validate_password_strength
+
 
 class UserRegister(BaseModel):
     """User registration model with validation."""
@@ -24,15 +26,7 @@ class UserRegister(BaseModel):
     @classmethod
     def validate_password(cls, v: str) -> str:
         """Validate password complexity."""
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", v):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"\d", v):
-            raise ValueError("Password must contain at least one digit")
-        return v
+        return validate_password_strength(v)
 
 
 class TokenResponse(BaseModel):
@@ -77,4 +71,52 @@ class VerifyEmailRequest(BaseModel):
 class VerifyEmailResponse(BaseModel):
     """Acknowledgement after successful email verification."""
 
+    status: str = "ok"
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request a password reset link (anti-enumeration: same response always)."""
+
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    """Neutral acknowledgement; does not reveal whether the email is registered."""
+
+    status: str = "ok"
+    message: str = "If an account exists for this email, you will receive reset instructions."
+
+
+class ResetPasswordValidateRequest(BaseModel):
+    """Check whether a reset token from the email link is still usable."""
+
+    token: str = Field(..., min_length=10, max_length=512)
+
+    @field_validator("token")
+    @classmethod
+    def strip_token(cls, v: str) -> str:
+        return v.strip()
+
+
+class ResetPasswordValidateResponse(BaseModel):
+    valid: bool
+    code: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=512)
+    password: str = Field(..., min_length=8, max_length=100)
+
+    @field_validator("token")
+    @classmethod
+    def strip_token(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+
+class ResetPasswordResponse(BaseModel):
     status: str = "ok"

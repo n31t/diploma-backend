@@ -5,6 +5,7 @@ This module provides utilities for JWT token creation/validation and password ha
 """
 
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import Dict, Any
 import secrets
 
@@ -85,6 +86,16 @@ def create_access_token(data: Dict[str, Any], config: Config) -> str:
 def generate_verification_token() -> str:
     """Cryptographically secure token for email verification links."""
     return secrets.token_urlsafe(32)
+
+
+def generate_password_reset_token() -> str:
+    """Cryptographically secure raw token for password reset (store only hash in DB)."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_password_reset_token(raw_token: str) -> str:
+    """SHA-256 hex digest of the raw reset token for database lookup."""
+    return sha256(raw_token.encode("utf-8")).hexdigest()
 
 
 def generate_refresh_token() -> str:

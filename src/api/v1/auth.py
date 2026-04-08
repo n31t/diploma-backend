@@ -10,6 +10,7 @@ from typing import Annotated
 from dishka import FromDishka
 from dishka.integrations.fastapi import DishkaRoute
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 
 from src.api.v1.schemas.user import (
     UserRegister,
@@ -18,7 +19,14 @@ from src.api.v1.schemas.user import (
     UserResponse,
     VerifyEmailRequest,
     VerifyEmailResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    ResetPasswordValidateRequest,
+    ResetPasswordValidateResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
 )
+from src.core.password_reset_error import PasswordResetError
 from src.dtos import UserRegisterDTO, UserLoginDTO, AuthenticatedUserDTO
 from src.services.auth_service import AuthService
 from src.services.shared.auth_helpers import get_authenticated_user_dependency
@@ -227,4 +235,69 @@ async def resend_verification(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to resend verification email",
+        )
+
+
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    service: FromDishka[AuthService],
+):
+    """
+    Request a password reset email. Response is always the same (no email enumeration).
+    """
+    await service.request_password_reset(str(body.email))
+    return ForgotPasswordResponse()
+
+
+@router.post(
+    "/reset-password/validate",
+    response_model=ResetPasswordValidateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def validate_reset_password_token(
+    body: ResetPasswordValidateRequest,
+    service: FromDishka[AuthService],
+):
+    """Check whether a reset token from the email link is still valid."""
+    valid, code = await service.validate_password_reset_token(body.token)
+    return ResetPasswordValidateResponse(valid=valid, code=code)
+
+
+@router.post(
+    "/reset-password",
+    response_model=ResetPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def reset_password(
+    body: ResetPasswordRequest,
+    service: FromDishka[AuthService],
+):
+    """Set a new password using a one-time token from the reset email."""
+    try:
+        await service.reset_password(body.token, body.password)
+        return ResetPasswordResponse()
+    except PasswordResetError as e:
+        logger.warning(
+            "reset_password_failed",
+            code=e.code,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": e.message, "code": e.code},
+        )
+    except Exception as e:
+        logger.error(
+            "reset_password_error",
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset password",
         )

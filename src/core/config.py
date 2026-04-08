@@ -21,6 +21,7 @@ class Config(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 48
+    PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 24
 
     # Telegram Configuration
     TELEGRAM_BOT_TOKEN: Optional[str] = None

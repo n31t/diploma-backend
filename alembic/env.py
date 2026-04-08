@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from src.models.base import Base
-from src.models.auth import User, RefreshToken, RegistrationToken
+from src.models.auth import User, RefreshToken, RegistrationToken, PasswordResetToken
 from src.models.ai_detection import AIDetectionHistory, UserLimit
 from src.models.subscription import Subscription
 from src.core.config import Config
