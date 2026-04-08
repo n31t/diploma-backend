@@ -39,4 +39,5 @@ dependencies = [
     "aiosmtplib>=4.0.0",
     "google-auth>=2.40.0",
     "langdetect>=1.0.9",
+    "lingua-language-detector>=2.2.0",
 ]

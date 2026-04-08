@@ -112,7 +112,7 @@ services:
 
   ml-api:
     build:
-      context: ../../diploma-ml-api
+      context: ../diploma-ml-api
       dockerfile: Dockerfile
     container_name: testing_ml_api
     restart: unless-stopped
@@ -141,7 +141,7 @@ services:
 
   frontend:
     build:
-      context: ../../DiplomaFrontend/diploma-front
+      context: ../diploma-front
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}

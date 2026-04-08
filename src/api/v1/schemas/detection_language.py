@@ -3,14 +3,14 @@ Detection language parsing for AI detection API.
 
 Public API accepts ru, kk, or auto.
 When auto is requested, the effective language is resolved from the text
-using langdetect after text extraction (in the service layer).
+using lingua-language-detector after text extraction (in the service layer).
 Alias kz is accepted for Kazakh and normalized to kk.
 """
 
 from dataclasses import dataclass
 from typing import Literal
 
-from langdetect import detect, LangDetectException
+from lingua import Language, LanguageDetectorBuilder
 
 from src.core.logging import get_logger
 
@@ -19,6 +19,13 @@ logger = get_logger(__name__)
 DetectionLanguageInput = Literal["ru", "kk", "auto"]
 DetectionLanguageRequested = Literal["ru", "kk", "auto"]
 DetectionMlLanguage = Literal["ru", "kk"]
+
+# Build detector once at module level — it's expensive to create
+_detector = (
+    LanguageDetectorBuilder
+    .from_languages(Language.RUSSIAN, Language.KAZAKH)
+    .build()
+)
 
 
 @dataclass(frozen=True)
@@ -31,18 +38,18 @@ class DetectionLanguageContext:
 
 def detect_language_from_text(text: str) -> DetectionMlLanguage:
     """
-    Detect language from text using langdetect.
-    Returns "kk" for Kazakh, "ru" for everything else (including Russian).
+    Detect language from text using lingua.
+    Returns "kk" for Kazakh, "ru" for everything else.
 
     Falls back to "ru" if detection fails (too little text, ambiguous, etc).
     """
     try:
-        lang = detect(text[:2000])  # use first 2000 chars — enough for detection
-        logger.info("language_auto_detected", detected=lang)
-        if lang == "kk":
+        lang = _detector.detect_language_of(text[:2000])
+        logger.info("language_auto_detected", detected=str(lang))
+        if lang == Language.KAZAKH:
             return "kk"
         return "ru"
-    except LangDetectException as e:
+    except Exception as e:
         logger.warning("language_detection_failed", error=str(e), fallback="ru")
         return "ru"
 
