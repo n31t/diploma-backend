@@ -3,6 +3,7 @@ Dependency injection container configuration using Dishka.
 """
 
 from src.ioc.database_provider import DatabaseProvider
+from src.ioc.email_provider import EmailProvider
 from src.ioc.redis_provider import RedisProvider
 from src.ioc.repository_provider import RepositoryProvider
 from src.ioc.service_provider import ServiceProvider
@@ -13,6 +14,7 @@ class AppProvider(
     RepositoryProvider,
     ServiceProvider,
     RedisProvider,
+    EmailProvider,
 ):
     """
     Main dependency injection provider for the application.

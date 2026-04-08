@@ -32,6 +32,7 @@ class UserDTO:
     username: str
     email: str
     is_active: bool
+    is_verified: bool
     created_at: datetime
     updated_at: datetime
 
@@ -64,5 +65,6 @@ class AuthenticatedUserDTO:
     username: str
     email: str
     is_active: bool
+    is_verified: bool
     created_at: datetime
     updated_at: datetime

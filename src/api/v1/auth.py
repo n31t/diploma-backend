@@ -11,7 +11,14 @@ from dishka import FromDishka
 from dishka.integrations.fastapi import DishkaRoute
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 
-from src.api.v1.schemas.user import UserRegister, UserLogin, TokenResponse, UserResponse
+from src.api.v1.schemas.user import (
+    UserRegister,
+    UserLogin,
+    TokenResponse,
+    UserResponse,
+    VerifyEmailRequest,
+    VerifyEmailResponse,
+)
 from src.dtos import UserRegisterDTO, UserLoginDTO, AuthenticatedUserDTO
 from src.services.auth_service import AuthService
 from src.services.shared.auth_helpers import get_authenticated_user_dependency
@@ -157,3 +164,67 @@ async def get_current_user_info(
     )
 
     return user
+
+
+@router.post(
+    "/verify-email",
+    response_model=VerifyEmailResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def verify_email(
+    body: VerifyEmailRequest,
+    service: FromDishka[AuthService],
+):
+    """
+    Confirm email address using a one-time token from the verification link.
+    """
+    try:
+        await service.verify_email_with_token(body.token)
+        return VerifyEmailResponse()
+    except ValueError as e:
+        logger.warning("verify_email_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(
+            "verify_email_error",
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify email",
+        )
+
+
+@router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
+async def resend_verification(
+    user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    service: FromDishka[AuthService],
+):
+    """
+    Send a new verification email to the authenticated user.
+    """
+    try:
+        await service.resend_verification_email(user.id)
+    except ValueError as e:
+        logger.warning("resend_verification_failed", user_id=user.id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(
+            "resend_verification_error",
+            user_id=user.id,
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to resend verification email",
+        )

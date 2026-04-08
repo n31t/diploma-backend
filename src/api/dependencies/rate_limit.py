@@ -11,14 +11,14 @@ from src.core.logging import get_logger
 from src.dtos.rate_limit_dto import RateLimitExceeded
 from src.dtos.user_dto import AuthenticatedUserDTO
 from src.services.rate_limiter_service import RateLimiterService
-from src.services.shared.auth_helpers import get_authenticated_user_dependency
+from src.services.shared.auth_helpers import require_verified_user
 
 logger = get_logger(__name__)
 
 
 async def check_rate_limit_dependency(
         request: Request,
-        current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+        current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ) -> None:
     """
     FastAPI dependency to check rate limits.

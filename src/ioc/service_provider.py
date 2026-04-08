@@ -9,6 +9,7 @@ from src.repositories.auth_repository import AuthRepository
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.repositories.subscription_repository import SubscriptionRepository
 from src.services.auth_service import AuthService
+from src.services.email_service import EmailService
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.newspaper_service import NewspaperService
 from src.services.ml_model_service import AIDetectionModelService
@@ -23,9 +24,12 @@ class ServiceProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def get_auth_service(
-        self, auth_repository: AuthRepository, config: Config
+        self,
+        auth_repository: AuthRepository,
+        config: Config,
+        email_service: EmailService,
     ) -> AuthService:
-        return AuthService(auth_repository, config)
+        return AuthService(auth_repository, config, email_service)
 
     # ── Stateless singletons (APP scope) ──────────────────────────────────
 

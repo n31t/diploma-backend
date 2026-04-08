@@ -17,7 +17,7 @@ from src.core.billing import ACTIVE_SUBSCRIPTION_STATUSES
 from src.core.logging import get_logger
 from src.dtos.user_dto import AuthenticatedUserDTO
 from src.repositories.subscription_repository import SubscriptionRepository
-from src.services.shared.auth_helpers import get_authenticated_user_dependency
+from src.services.shared.auth_helpers import require_verified_user
 from src.services.stripe_service import StripeService
 
 logger = get_logger(__name__)
@@ -55,7 +55,7 @@ async def stripe_webhook(request: Request, stripe_service: FromDishka[StripeServ
 @router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout(
     stripe_service: FromDishka[StripeService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """Create a Stripe Checkout session for a premium subscription."""
     try:
@@ -74,7 +74,7 @@ async def create_checkout(
 @router.get("/subscription", response_model=SubscriptionStatusResponse)
 async def get_subscription_status(
     subscription_repo: FromDishka[SubscriptionRepository],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """Return the current user's subscription status."""
     sub = await subscription_repo.get_by_user_id(current_user.id)
@@ -93,7 +93,7 @@ async def get_subscription_status(
 @router.post("/portal", response_model=PortalResponse)
 async def create_portal(
     stripe_service: FromDishka[StripeService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """Create a Stripe Customer Portal session for subscription management."""
     try:

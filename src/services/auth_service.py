@@ -16,12 +16,15 @@ from src.core.logging import get_logger
 from src.core.security import (
     create_access_token,
     generate_refresh_token,
+    generate_verification_token,
     hash_password,
     verify_password,
 )
 from src.dtos import UserLoginDTO, UserRegisterDTO, TokenDTO
 from src.dtos.telegram_dto import TelegramConnectDTO, TelegramStatusDTO
+from src.models.auth import User
 from src.repositories.auth_repository import AuthRepository
+from src.services.email_service import EmailService
 
 logger = get_logger(__name__)
 
@@ -29,9 +32,15 @@ logger = get_logger(__name__)
 class AuthService:
     """Service for managing authentication-related business logic."""
 
-    def __init__(self, auth_repository: AuthRepository, config: Config):
+    def __init__(
+        self,
+        auth_repository: AuthRepository,
+        config: Config,
+        email_service: EmailService,
+    ):
         self.auth_repository = auth_repository
         self.config = config
+        self.email_service = email_service
 
     async def register_user(
         self,
@@ -51,7 +60,9 @@ class AuthService:
             username=user_data.username,
             email=user_data.email,
             hashed_password=hashed_password,
+            is_verified=False,
         )
+        await self._send_new_verification_email(user)
 
         access_token = create_access_token(
             data={"sub": str(user.id), "username": user.username},
@@ -104,6 +115,46 @@ class AuthService:
 
         logger.info("login_successful", user_id=user.id, username=user.username)
         return TokenDTO(access_token=access_token, refresh_token=refresh_token)
+
+    async def verify_email_with_token(self, token: str) -> None:
+        row = await self.auth_repository.get_valid_verification_token_by_value(token)
+        if not row:
+            raise ValueError("Invalid or expired token")
+        user = await self.auth_repository.get_user_by_id(row.user_id)
+        if not user:
+            raise ValueError("Invalid or expired token")
+        if user.is_verified:
+            await self.auth_repository.mark_verification_token_used(row.id)
+            return
+        await self.auth_repository.set_user_verified(user.id)
+        await self.auth_repository.mark_verification_token_used(row.id)
+        logger.info("email_verified", user_id=user.id)
+
+    async def resend_verification_email(self, user_id: str) -> None:
+        user = await self.auth_repository.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+        if user.is_verified:
+            raise ValueError("Email already verified")
+        await self.auth_repository.revoke_pending_verification_tokens_for_user(user.id)
+        await self._send_new_verification_email(user)
+        logger.info("verification_email_resent", user_id=user.id)
+
+    async def _send_new_verification_email(self, user: User) -> None:
+        raw = generate_verification_token()
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=self.config.EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS
+        )
+        await self.auth_repository.create_email_verification_token(
+            user_id=user.id,
+            token=raw,
+            expires_at=expires_at,
+        )
+        await self.email_service.send_verification_email(
+            to=user.email,
+            token=raw,
+            username=user.username,
+        )
 
     # ── Telegram ────────────────────────────────────────────────────────────
 

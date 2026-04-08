@@ -20,6 +20,7 @@ class Config(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 48
 
     # Telegram Configuration
     TELEGRAM_BOT_TOKEN: Optional[str] = None
@@ -31,6 +32,15 @@ class Config(BaseSettings):
     STRIPE_WEBHOOK_SECRET: Optional[str] = None
     STRIPE_PRICE_ID: Optional[str] = None
     FRONTEND_URL: str = "http://localhost:3000"
+
+    # SMTP (optional). If SMTP_HOST is set, verification emails are sent via SMTP.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM_EMAIL: Optional[str] = None
+    SMTP_USE_TLS: bool = True
+    SMTP_SSL: bool = False
 
     @property
     def db_url(self):

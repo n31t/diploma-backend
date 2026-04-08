@@ -82,6 +82,11 @@ def create_access_token(data: Dict[str, Any], config: Config) -> str:
     return encoded_jwt
 
 
+def generate_verification_token() -> str:
+    """Cryptographically secure token for email verification links."""
+    return secrets.token_urlsafe(32)
+
+
 def generate_refresh_token() -> str:
     """
     Generate a cryptographically secure random refresh token.

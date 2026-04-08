@@ -57,6 +57,24 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_active: bool
+    is_verified: bool
 
     class Config:
         from_attributes = True
+
+
+class VerifyEmailRequest(BaseModel):
+    """Confirm email using token from the verification link."""
+
+    token: str = Field(..., min_length=10, max_length=512)
+
+    @field_validator("token")
+    @classmethod
+    def strip_token(cls, v: str) -> str:
+        return v.strip()
+
+
+class VerifyEmailResponse(BaseModel):
+    """Acknowledgement after successful email verification."""
+
+    status: str = "ok"

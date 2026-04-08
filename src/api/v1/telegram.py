@@ -12,7 +12,7 @@ from src.api.v1.schemas.telegram import TelegramConnectResponse, TelegramStatusR
 from src.core.logging import get_logger
 from src.dtos.user_dto import AuthenticatedUserDTO
 from src.services.auth_service import AuthService
-from src.services.shared.auth_helpers import get_authenticated_user_dependency
+from src.services.shared.auth_helpers import require_verified_user
 
 logger = get_logger(__name__)
 
@@ -37,7 +37,7 @@ router = APIRouter(
 )
 async def generate_telegram_connection_url(
     service: FromDishka[AuthService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     logger.info("generate_telegram_connection_url_request", user_id=current_user.id)
     try:
@@ -66,7 +66,7 @@ async def generate_telegram_connection_url(
 )
 async def get_telegram_status(
     service: FromDishka[AuthService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     logger.info("get_telegram_status_request", user_id=current_user.id)
     try:
@@ -95,7 +95,7 @@ async def get_telegram_status(
 )
 async def disconnect_telegram(
     service: FromDishka[AuthService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     logger.info("disconnect_telegram_request", user_id=current_user.id)
     try:

@@ -7,10 +7,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.auth import User, RefreshToken
+from src.models.auth import User, RefreshToken, RegistrationToken
 
 
 class AuthRepository:
@@ -49,7 +49,14 @@ class AuthRepository:
         )
         return result.scalar_one_or_none()
 
-    async def create_user(self, username: str, email: str, hashed_password: str) -> User:
+    async def create_user(
+        self,
+        username: str,
+        email: str,
+        hashed_password: str,
+        *,
+        is_verified: bool = False,
+    ) -> User:
         """
         Create a new user in the database.
 
@@ -57,6 +64,7 @@ class AuthRepository:
             username: User's username
             email: User's email
             hashed_password: Bcrypt hashed password
+            is_verified: Email confirmation flag (default False for self-registration)
 
         Returns:
             Created User object
@@ -65,7 +73,8 @@ class AuthRepository:
             username=username,
             email=email,
             hashed_password=hashed_password,
-            is_active=True
+            is_active=True,
+            is_verified=is_verified,
         )
 
         self.session.add(user)
@@ -122,6 +131,64 @@ class AuthRepository:
             select(User).where(User.id == user_id)
         )
         return result.scalar_one_or_none()
+
+    async def create_email_verification_token(
+        self,
+        user_id: str,
+        token: str,
+        expires_at: datetime,
+    ) -> RegistrationToken:
+        row = RegistrationToken(
+            token=token,
+            user_id=user_id,
+            expires_at=expires_at,
+            is_used=False,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        await self.session.refresh(row)
+        return row
+
+    async def get_valid_verification_token_by_value(
+        self, token: str
+    ) -> Optional[RegistrationToken]:
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            select(RegistrationToken).where(
+                RegistrationToken.token == token,
+                RegistrationToken.is_used.is_(False),
+                RegistrationToken.expires_at > now,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_verification_token_used(self, token_id: str) -> None:
+        await self.session.execute(
+            update(RegistrationToken)
+            .where(RegistrationToken.id == token_id)
+            .values(is_used=True)
+        )
+        await self.session.flush()
+
+    async def revoke_pending_verification_tokens_for_user(self, user_id: str) -> None:
+        await self.session.execute(
+            update(RegistrationToken)
+            .where(
+                RegistrationToken.user_id == user_id,
+                RegistrationToken.is_used.is_(False),
+            )
+            .values(is_used=True)
+        )
+        await self.session.flush()
+
+    async def set_user_verified(self, user_id: str) -> Optional[User]:
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        user.is_verified = True
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
 
     # ── Telegram ────────────────────────────────────────────────────────────
 

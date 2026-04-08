@@ -18,7 +18,7 @@ from src.core.logging import get_logger
 from src.dtos import AuthenticatedUserDTO
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.ai_detection_service import AIDetectionService
-from src.services.shared.auth_helpers import get_authenticated_user_dependency
+from src.services.shared.auth_helpers import require_verified_user
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,7 @@ router = APIRouter(
 )
 async def get_user_limits(
     service: FromDishka[AIDetectionService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """
     Get current user's limits and usage.
@@ -92,7 +92,7 @@ async def get_user_limits(
 )
 async def get_detection_history(
     repository: FromDishka[AIDetectionRepository],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
     limit: int = Query(50, ge=1, le=100, description="Number of records to return"),
     offset: int = Query(0, ge=0, description="Number of records to skip")
 ):
@@ -174,7 +174,7 @@ async def get_detection_history(
 )
 async def get_user_stats(
     repository: FromDishka[AIDetectionRepository],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """
     Get aggregated statistics for current user.
@@ -216,7 +216,7 @@ async def get_user_stats(
 )
 async def delete_detection_history(
     repository: FromDishka[AIDetectionRepository],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """
     Delete all detection history for current user.

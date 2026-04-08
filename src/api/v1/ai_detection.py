@@ -26,7 +26,7 @@ from src.dtos import AuthenticatedUserDTO
 from src.dtos.ai_detection_dto import DetectionResult, DetectionSource
 from src.services.ai_detection_service import AIDetectionService
 from src.services.ml_model_service import KazakhMlApiUnavailableError
-from src.services.shared.auth_helpers import get_authenticated_user_dependency
+from src.services.shared.auth_helpers import require_verified_user
 from src.services.url_detection_service import URLDetectionService
 
 logger = get_logger(__name__)
@@ -74,7 +74,7 @@ class AIDetectionWithLimitsResponse(AIDetectionResponse):
 async def detect_from_text(
     request: TextDetectionRequest,
     service: FromDishka[AIDetectionService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
 ):
     """
     Detect if provided text is AI-generated or human-written.
@@ -209,7 +209,7 @@ async def detect_from_text(
 async def detect_from_file(
     file: Annotated[UploadFile, File(description="File to analyze (PDF, DOCX, DOC, TXT)")],
     service: FromDishka[AIDetectionService],
-    current_user: Annotated[AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
     language: Annotated[
         str,
         Form(description="ru | kk | auto (→ ru); kz accepted as kk"),
@@ -401,7 +401,7 @@ async def detect_from_url(
     request: URLDetectionRequest,
     service: FromDishka[URLDetectionService],
     current_user: Annotated[
-        AuthenticatedUserDTO, Depends(get_authenticated_user_dependency)
+        AuthenticatedUserDTO, Depends(require_verified_user)
     ],
 ) -> AIDetectionWithLimitsResponse:
     """
