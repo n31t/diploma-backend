@@ -4,9 +4,8 @@ URL Detection service.
 Orchestrates the full pipeline:
   NewspaperService → (optional TextCleaner) → AIDetectionModelService → history/limits
 
-Replaces the previous Jina Reader + TextCleaner approach.
 newspaper4k already returns clean plain text, so a heavy Markdown-stripping
-step is no longer needed.  We still run a light normalisation pass (collapse
+step is no longer needed. We still run a light normalisation pass (collapse
 excess whitespace, strip control characters) before sending text to the model.
 """
 
@@ -15,7 +14,10 @@ from __future__ import annotations
 import re
 import time
 
-from src.api.v1.schemas.detection_language import DetectionLanguageContext
+from src.api.v1.schemas.detection_language import (
+    DetectionLanguageContext,
+    resolve_effective_language,
+)
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import AIDetectionResultDTO, DetectionSource
 from src.dtos.limits_dto import UserLimitDTO
@@ -56,15 +58,10 @@ class URLDetectionService:
     2. Download page + extract article text via NewspaperService.
     3. Light normalisation pass.
     4. Validate minimum text length.
-    5. Run ML inference (AIDetectionModelService → ml-api microservice).
-    6. Persist detection record + increment usage counters.
-    7. Return AIDetectionResultDTO + updated UserLimitDTO.
-
-    Dependencies
-    ------------
-    newspaper_service       — HTTP download + article extraction (I/O-bound)
-    ml_model_service        — ML inference via internal HTTP microservice (I/O-bound)
-    ai_detection_repository — PostgreSQL persistence (SQLAlchemy async)
+    5. Resolve effective language from extracted text (if auto was requested).
+    6. Run ML inference (AIDetectionModelService → ml-api microservice).
+    7. Persist detection record + increment usage counters.
+    8. Return AIDetectionResultDTO + updated UserLimitDTO.
     """
 
     def __init__(
@@ -88,8 +85,9 @@ class URLDetectionService:
         Run the full URL → detection pipeline for a user.
 
         Args:
-            url:     Full HTTP/HTTPS URL of the article to analyse.
-            user_id: Authenticated user's ULID.
+            url:      Full HTTP/HTTPS URL of the article to analyse.
+            user_id:  Authenticated user's ULID.
+            language: Language context from request.
 
         Returns:
             Tuple of (AIDetectionResultDTO, UserLimitDTO).
@@ -125,8 +123,6 @@ class URLDetectionService:
             )
 
         # ── 2. Fetch & extract article ─────────────────────────────────────
-        # NewspaperService raises ValueError for bad URLs / no content,
-        # RuntimeError for network failures.
         article = await self._newspaper.fetch_article(url)
 
         # ── 3. Normalise ───────────────────────────────────────────────────
@@ -144,13 +140,23 @@ class URLDetectionService:
                 f"(minimum 50 characters required)."
             )
 
-        # ── 5. ML inference ────────────────────────────────────────────────
+        # ── 5. Resolve language from extracted text (handles auto) ─────────
+        language = resolve_effective_language(plain_text, language)
+
+        logger.info(
+            "url_language_resolved",
+            url=url,
+            language_requested=language.requested,
+            language_effective=language.effective,
+        )
+
+        # ── 6. ML inference ────────────────────────────────────────────────
         result, confidence = await self._model.detect_ai_text(
             plain_text, language=language.effective
         )
         processing_time_ms = int((time.time() - start_time) * 1000)
 
-        # ── 6. Persist ─────────────────────────────────────────────────────
+        # ── 7. Persist ─────────────────────────────────────────────────────
         updated_limit = await self._repo.increment_usage(user_id)
 
         await self._repo.create_history_record(
@@ -161,11 +167,11 @@ class URLDetectionService:
             text_preview=plain_text[:500],
             text_length=len(plain_text),
             word_count=len(plain_text.split()),
-            file_name=url,               # store the URL as "file_name" for history display
+            file_name=url,
             processing_time_ms=processing_time_ms,
         )
 
-        # ── 7. Build response DTOs ─────────────────────────────────────────
+        # ── 8. Build response DTOs ─────────────────────────────────────────
         detection_result = AIDetectionResultDTO(
             result=result,
             confidence=confidence,

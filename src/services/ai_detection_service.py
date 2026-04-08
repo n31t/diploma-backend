@@ -6,7 +6,10 @@ import os
 import tempfile
 import time
 
-from src.api.v1.schemas.detection_language import DetectionLanguageContext
+from src.api.v1.schemas.detection_language import (
+    DetectionLanguageContext,
+    resolve_effective_language,
+)
 from src.core.gemini_config import gemini_config
 from src.core.logging import get_logger
 from src.dtos.ai_detection_dto import (
@@ -81,6 +84,7 @@ class AIDetectionService:
         Args:
             text: Text to analyze
             user_id: User ID
+            language: Language context from request
 
         Returns:
             Tuple of (AIDetectionResultDTO, UserLimitDTO)
@@ -89,6 +93,9 @@ class AIDetectionService:
             ValueError: If text is invalid or limits exceeded
         """
         start_time = time.time()
+
+        # Text is available here — resolve auto language from it
+        language = resolve_effective_language(text, language)
 
         logger.info(
             "detecting_from_text",
@@ -182,6 +189,7 @@ class AIDetectionService:
             file_name: Original file name
             content_type: MIME type of the file
             user_id: User ID
+            language: Language context from request
 
         Returns:
             Tuple of (AIDetectionResultDTO, UserLimitDTO)
@@ -224,6 +232,16 @@ class AIDetectionService:
                     "Extracted text is too short or invalid. "
                     "The file may not contain enough text content."
                 )
+
+            # Text is now available — resolve auto language from extracted text
+            language = resolve_effective_language(extracted_text, language)
+
+            logger.info(
+                "file_language_resolved",
+                file_name=file_name,
+                language_requested=language.requested,
+                language_effective=language.effective,
+            )
 
             # Run AI detection on extracted text
             result, confidence = await self.ml_model_service.detect_ai_text(
