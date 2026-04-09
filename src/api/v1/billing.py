@@ -7,13 +7,16 @@ from typing import Annotated
 import stripe
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from src.api.v1.schemas.billing import (
+    BillingActionResponse,
     CheckoutResponse,
     PortalResponse,
     SubscriptionStatusResponse,
 )
 from src.core.billing import ACTIVE_SUBSCRIPTION_STATUSES
+from src.core.billing_exceptions import BillingServiceError
 from src.core.logging import get_logger
 from src.dtos.user_dto import AuthenticatedUserDTO
 from src.repositories.subscription_repository import SubscriptionRepository
@@ -21,6 +24,13 @@ from src.services.shared.auth_helpers import require_verified_user
 from src.services.stripe_service import StripeService
 
 logger = get_logger(__name__)
+
+
+def _billing_error_json(exc: BillingServiceError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={"detail": exc.message, "code": exc.code},
+    )
 
 router = APIRouter(prefix="/billing", route_class=DishkaRoute)
 
@@ -87,6 +97,7 @@ async def get_subscription_status(
         plan_type=sub.plan_type,
         current_period_end=sub.current_period_end,
         cancel_at_period_end=sub.cancel_at_period_end,
+        stripe_subscription_id=sub.stripe_subscription_id,
     )
 
 
@@ -107,3 +118,51 @@ async def create_portal(
             detail="Could not create portal session",
         )
     return PortalResponse(url=url)
+
+
+@router.post("/cancel", response_model=BillingActionResponse)
+async def cancel_subscription(
+    stripe_service: FromDishka[StripeService],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
+):
+    """Schedule subscription cancellation at end of billing period (Stripe API only; webhooks sync DB)."""
+    try:
+        already = await stripe_service.cancel_subscription_for_user(current_user.id)
+    except BillingServiceError as exc:
+        return _billing_error_json(exc)
+
+    if already:
+        logger.info("cancellation_already_scheduled", user_id=current_user.id)
+        return BillingActionResponse(
+            status="ok",
+            message="Subscription cancellation already scheduled",
+            sync_pending=False,
+            already_scheduled=True,
+        )
+
+    return BillingActionResponse(
+        status="ok",
+        message="Subscription cancellation scheduled",
+        sync_pending=True,
+        already_scheduled=False,
+    )
+
+
+@router.post("/resume", response_model=BillingActionResponse)
+async def resume_subscription(
+    stripe_service: FromDishka[StripeService],
+    current_user: Annotated[AuthenticatedUserDTO, Depends(require_verified_user)],
+):
+    """Remove cancel-at-period-end before the period ends (Stripe API only; webhooks sync DB)."""
+    try:
+        await stripe_service.resume_subscription_for_user(current_user.id)
+    except BillingServiceError as exc:
+        return _billing_error_json(exc)
+
+    logger.info("resume_requested_endpoint", user_id=current_user.id)
+    return BillingActionResponse(
+        status="ok",
+        message="Subscription renewal resumed",
+        sync_pending=True,
+        already_scheduled=False,
+    )

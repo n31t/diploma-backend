@@ -18,6 +18,7 @@ from src.core.billing import (
     PREMIUM_DAILY_LIMIT,
     PREMIUM_MONTHLY_LIMIT,
 )
+from src.core.billing_exceptions import BillingServiceError
 from src.core.config import Config
 from src.core.logging import get_logger
 from src.repositories.ai_detection_repository import AIDetectionRepository
@@ -91,6 +92,109 @@ class StripeService:
             return_url=f"{self.config.FRONTEND_URL}/dashboard/billing",
         )
         return session.url
+
+    # ------------------------------------------------------------------
+    # Public: cancel / resume (Stripe API only; webhooks update local DB)
+    # ------------------------------------------------------------------
+
+    async def cancel_subscription_for_user(self, user_id: str) -> bool:
+        """Request cancel at period end in Stripe. Returns True if already scheduled (idempotent).
+
+        Does not write subscription rows or user_limits; webhooks sync state.
+        """
+        if not self.config.STRIPE_SECRET_KEY:
+            logger.warning("stripe_cancel_skipped_no_secret_key", user_id=user_id)
+            raise BillingServiceError(
+                "STRIPE_NOT_CONFIGURED",
+                "Stripe is not configured on this server",
+                http_status=503,
+            )
+
+        sub = await self.subscription_repo.get_by_user_id(user_id)
+        if sub is None:
+            raise BillingServiceError(
+                "NO_ACTIVE_SUBSCRIPTION",
+                "No subscription found for this user",
+                http_status=404,
+            )
+
+        if sub.status not in ACTIVE_SUBSCRIPTION_STATUSES:
+            raise BillingServiceError(
+                "NO_ACTIVE_SUBSCRIPTION",
+                "No active subscription to cancel",
+                http_status=404,
+            )
+
+        if sub.cancel_at_period_end:
+            logger.info("cancellation_already_scheduled", user_id=user_id)
+            return True
+
+        try:
+            stripe.Subscription.modify(sub.stripe_subscription_id, cancel_at_period_end=True)
+        except stripe.error.StripeError as exc:
+            logger.warning(
+                "stripe_cancellation_failed",
+                user_id=user_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise BillingServiceError(
+                "STRIPE_REQUEST_FAILED",
+                "Could not schedule subscription cancellation",
+                http_status=502,
+            ) from exc
+
+        logger.info("cancellation_requested", user_id=user_id, subscription_id=sub.stripe_subscription_id)
+        return False
+
+    async def resume_subscription_for_user(self, user_id: str) -> None:
+        """Clear cancel-at-period-end in Stripe. Webhooks update local DB."""
+        if not self.config.STRIPE_SECRET_KEY:
+            logger.warning("stripe_resume_skipped_no_secret_key", user_id=user_id)
+            raise BillingServiceError(
+                "STRIPE_NOT_CONFIGURED",
+                "Stripe is not configured on this server",
+                http_status=503,
+            )
+
+        sub = await self.subscription_repo.get_by_user_id(user_id)
+        if sub is None:
+            raise BillingServiceError(
+                "SUBSCRIPTION_NOT_FOUND",
+                "No subscription found for this user",
+                http_status=404,
+            )
+
+        if sub.status not in ACTIVE_SUBSCRIPTION_STATUSES:
+            raise BillingServiceError(
+                "NO_ACTIVE_SUBSCRIPTION",
+                "Subscription is not active",
+                http_status=404,
+            )
+
+        if not sub.cancel_at_period_end:
+            raise BillingServiceError(
+                "CANCELLATION_NOT_SCHEDULED",
+                "Subscription is not scheduled for cancellation",
+                http_status=409,
+            )
+
+        try:
+            stripe.Subscription.modify(sub.stripe_subscription_id, cancel_at_period_end=False)
+        except stripe.error.StripeError as exc:
+            logger.warning(
+                "stripe_resume_failed",
+                user_id=user_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise BillingServiceError(
+                "STRIPE_REQUEST_FAILED",
+                "Could not resume subscription",
+                http_status=502,
+            ) from exc
+
+        logger.info("resume_requested", user_id=user_id, subscription_id=sub.stripe_subscription_id)
 
     # ------------------------------------------------------------------
     # Public: webhook

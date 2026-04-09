@@ -231,6 +231,32 @@ class TestSubscriptionUpsert:
             is_premium=False,
         )
 
+    @pytest.mark.asyncio
+    async def test_cancel_at_period_end_true_still_active_keeps_premium(
+        self, stripe_service, mock_subscription_repo, mock_ai_detection_repo
+    ):
+        """Scheduled cancellation: status stays active/trialing — user remains premium until period ends."""
+        event = _make_event("customer.subscription.updated", "evt_cancel_sched", {
+            "id": "sub_123",
+            "customer": "cus_123",
+            "status": "active",
+            "current_period_end": int(time.time()) + 86400 * 10,
+            "cancel_at_period_end": True,
+            "metadata": {"user_id": "user_01"},
+        })
+
+        await stripe_service.handle_event(event)
+
+        call_kwargs = mock_subscription_repo.upsert.call_args.kwargs
+        assert call_kwargs["cancel_at_period_end"] is True
+
+        mock_ai_detection_repo.update_user_limits.assert_awaited_once_with(
+            user_id="user_01",
+            daily_limit=PREMIUM_DAILY_LIMIT,
+            monthly_limit=PREMIUM_MONTHLY_LIMIT,
+            is_premium=True,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Unit: idempotent replay
