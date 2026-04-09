@@ -223,7 +223,7 @@ class AIDetectionService:
             # Extract text using Gemini
             logger.info("extracting_text_from_file", file_name=file_name, user_id=user_id)
             extracted_text = await self.gemini_service.extract_text_from_file(
-                temp_path, file_name
+                temp_path, file_name, content_type=content_type
             )
 
             # Validate extracted text

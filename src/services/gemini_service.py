@@ -3,21 +3,115 @@ Gemini service for text extraction from files.
 
 This service handles interaction with Google's Gemini AI model
 to extract text from various file formats.
+
+Gemini multimodal `generate_content` accepts only a limited set of document MIME types
+(e.g. PDF, plain text), not Office Open XML (.docx / .pptx). Those are read locally.
 """
 
 import asyncio
-import logging
+import mimetypes
 import os
-import tempfile
-from typing import Optional
+from pathlib import Path
 
 import google.generativeai as genai
+from docx import Document as DocxDocument
 from google.generativeai.types import HarmBlockThreshold, HarmCategory
+from lxml import html as lxml_html
+from pptx import Presentation
 
 from src.core.gemini_config import gemini_config
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Formats we extract without calling Gemini (unsupported or unnecessary for the Files API).
+_LOCAL_TEXT_EXTRACTION_EXTENSIONS: frozenset[str] = frozenset({
+    ".docx",
+    ".pptx",
+    ".txt",
+    ".html",
+})
+
+# google.generativeai.upload_file does not always infer MIME type from the path;
+# map extensions we allow in config so uploads work with any filename (e.g. non-Latin).
+_MIME_BY_EXTENSION: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".pdf": "application/pdf",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".txt": "text/plain",
+    ".html": "text/html",
+}
+
+
+def _resolve_upload_mime_type(file_name: str, content_type: str | None) -> str:
+    if content_type:
+        primary = content_type.split(";")[0].strip()
+        if primary and primary.lower() != "application/octet-stream":
+            return primary
+    guessed, _ = mimetypes.guess_type(file_name)
+    if guessed:
+        return guessed
+    ext = os.path.splitext(file_name)[1].lower()
+    if ext in _MIME_BY_EXTENSION:
+        return _MIME_BY_EXTENSION[ext]
+    raise ValueError(
+        "Could not determine MIME type for this file; "
+        "provide a correct Content-Type or a file name with a known extension."
+    )
+
+
+def _extract_docx_text(path: str) -> str:
+    doc = DocxDocument(path)
+    parts: list[str] = []
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        if t:
+            parts.append(t)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for cp in cell.paragraphs:
+                    t = cp.text.strip()
+                    if t:
+                        parts.append(t)
+    return "\n".join(parts)
+
+
+def _extract_pptx_text(path: str) -> str:
+    prs = Presentation(path)
+    parts: list[str] = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                t = (shape.text or "").strip()
+                if t:
+                    parts.append(t)
+    return "\n".join(parts)
+
+
+def _extract_txt_or_html(path: str, ext: str) -> str:
+    raw = Path(path).read_bytes()
+    if ext == ".html":
+        tree = lxml_html.fromstring(raw)
+        return tree.text_content()
+    return raw.decode("utf-8", errors="replace")
+
+
+def _extract_text_locally(file_path: str, ext: str) -> str:
+    if ext == ".docx":
+        return _extract_docx_text(file_path)
+    if ext == ".pptx":
+        return _extract_pptx_text(file_path)
+    if ext in (".txt", ".html"):
+        return _extract_txt_or_html(file_path, ext)
+    raise ValueError(f"Local extraction not implemented for {ext!r}")
 
 
 class GeminiTextExtractor:
@@ -34,13 +128,19 @@ class GeminiTextExtractor:
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
 
-    async def extract_text_from_file(self, file_path: str, file_name: str) -> str:
+    async def extract_text_from_file(
+        self,
+        file_path: str,
+        file_name: str,
+        content_type: str | None = None,
+    ) -> str:
         """
         Extract text from a file using Gemini.
 
         Args:
             file_path: Path to the temporary file
             file_name: Original name of the file
+            content_type: MIME type from the client upload (strongly recommended)
 
         Returns:
             Extracted text content
@@ -48,15 +148,53 @@ class GeminiTextExtractor:
         Raises:
             Exception: If text extraction fails
         """
+        ext = os.path.splitext(file_name)[1].lower()
+
+        if ext == ".doc":
+            raise ValueError(
+                "Legacy Word .doc files are not supported. "
+                "Please upload .docx or PDF instead."
+            )
+
+        if ext in _LOCAL_TEXT_EXTRACTION_EXTENSIONS:
+            try:
+                logger.info(
+                    "extracting_text_locally",
+                    file_name=file_name,
+                    extension=ext,
+                )
+                text = await asyncio.to_thread(_extract_text_locally, file_path, ext)
+                text = (text or "").strip()
+                if not text:
+                    raise ValueError("No readable text found in document")
+                logger.info(
+                    "text_extraction_successful",
+                    file_name=file_name,
+                    text_length=len(text),
+                    source="local",
+                )
+                return text
+            except Exception as e:
+                logger.error(
+                    "text_extraction_failed",
+                    file_name=file_name,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    exc_info=True,
+                )
+                raise RuntimeError(f"Failed to extract text from file: {str(e)}")
+
         uploaded_file = None
         try:
+            mime_type = _resolve_upload_mime_type(file_name, content_type)
             logger.info(
                 "uploading_file_to_gemini",
-                file_name=file_name
+                file_name=file_name,
+                mime_type=mime_type,
             )
 
             # Upload file to Gemini
-            uploaded_file = genai.upload_file(file_path)
+            uploaded_file = genai.upload_file(file_path, mime_type=mime_type)
 
             # Wait for file processing
             logger.info("waiting_for_file_processing", file_name=file_name)
@@ -87,13 +225,15 @@ class GeminiTextExtractor:
             if not text or not text.strip():
                 raise ValueError("No readable text found in document")
 
+            out = text.strip()
             logger.info(
                 "text_extraction_successful",
                 file_name=file_name,
-                text_length=len(response.text)
+                text_length=len(out),
+                source="gemini",
             )
 
-            return response.text.strip()
+            return out
 
         except Exception as e:
             logger.error(
