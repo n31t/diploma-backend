@@ -144,7 +144,7 @@ services:
       context: ../diploma-front
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api/v1}
         # Baked into the client at build time; use NEXT_PUBLIC_* or fall back to backend GOOGLE_CLIENT_ID
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     container_name: testing_frontend
@@ -152,10 +152,29 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+      - INTERNAL_API_BASE_URL=http://api:8000
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-/api/v1}
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - app-network
+
+  stripe-listener:
+    image: stripe/stripe-cli:latest
+    container_name: testing_stripe_listener
+    profiles:
+      - tools
+    env_file: .env
+    command:
+      - listen
+      - --api-key
+      - ${STRIPE_SECRET_KEY}
+      - --forward-to
+      - ${STRIPE_FORWARD_TO:-https://langproofai.online/api/v1/billing/webhook}
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
     networks:
       - app-network
 
