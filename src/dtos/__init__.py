@@ -19,6 +19,12 @@ from src.dtos.ai_detection_dto import (
     AIDetectionRequestDTO,
     AIDetectionResultDTO,
 )
+from src.dtos.normalization_dto import (
+    NormalizationMetadata,
+    NormalizationResult,
+    QualityFlags,
+    StructuredBlock,
+)
 
 __all__ = [
     "UserRegisterDTO",
@@ -32,4 +38,8 @@ __all__ = [
     "TextExtractionDTO",
     "AIDetectionRequestDTO",
     "AIDetectionResultDTO",
+    "NormalizationMetadata",
+    "NormalizationResult",
+    "QualityFlags",
+    "StructuredBlock",
 ]

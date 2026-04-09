@@ -17,6 +17,7 @@ from src.services.ml_model_service import AIDetectionModelService
 from src.services.ai_detection_service import AIDetectionService
 from src.services.stripe_service import StripeService
 from src.services.telegram_detection_service import TelegramDetectionService
+from src.services.text_normalization_service import TextNormalizationService
 from src.services.url_detection_service import URLDetectionService
 
 
@@ -53,14 +54,13 @@ class ServiceProvider(Provider):
 
     @provide(scope=Scope.APP)
     def get_newspaper_service(self) -> NewspaperService:
-        """
-        Newspaper service for downloading and extracting article text from URLs.
-
-        Replaces the former JinaReaderService + TextCleanerService pair.
-        newspaper4k handles fetching, HTML parsing, boilerplate removal,
-        and returns clean plain text directly.
-        """
+        """newspaper4k article fetcher — handles HTML parsing + boilerplate removal."""
         return NewspaperService()
+
+    @provide(scope=Scope.APP)
+    def get_normalization_service(self) -> TextNormalizationService:
+        """Style-preserving text normalization for the AI-detection pipeline."""
+        return TextNormalizationService()
 
     # ── Per-request services (REQUEST scope) ──────────────────────────────
 
@@ -70,11 +70,13 @@ class ServiceProvider(Provider):
         gemini_service: GeminiTextExtractor,
         ml_model_service: AIDetectionModelService,
         ai_detection_repository: AIDetectionRepository,
+        normalization_service: TextNormalizationService,
     ) -> AIDetectionService:
         return AIDetectionService(
             gemini_service,
             ml_model_service,
             ai_detection_repository,
+            normalization_service,
         )
 
     @provide(scope=Scope.REQUEST)
@@ -83,16 +85,13 @@ class ServiceProvider(Provider):
         newspaper_service: NewspaperService,
         ml_model_service: AIDetectionModelService,
         ai_detection_repository: AIDetectionRepository,
+        normalization_service: TextNormalizationService,
     ) -> URLDetectionService:
-        """
-        URL detection service wired with NewspaperService instead of Jina.
-
-        TextCleanerService is no longer needed — newspaper returns plain text.
-        """
         return URLDetectionService(
             newspaper_service,
             ml_model_service,
             ai_detection_repository,
+            normalization_service,
         )
 
     @provide(scope=Scope.REQUEST)

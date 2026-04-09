@@ -22,6 +22,7 @@ from src.services.ml_model_service import AIDetectionModelService
 from src.services.ai_detection_service import AIDetectionService
 from src.services.telegram_detection_service import TelegramDetectionService
 from src.services.telegram_bot_service import TelegramBotService
+from src.services.text_normalization_service import TextNormalizationService
 
 setup_logging(
     level="DEBUG" if config.DEBUG else "INFO",
@@ -35,6 +36,7 @@ def _build_telegram_bot_service(
         session_maker: async_sessionmaker[AsyncSession],
         gemini_service: GeminiTextExtractor,
         ml_model_service: AIDetectionModelService,
+        normalization_service: TextNormalizationService,
 ) -> TelegramBotService:
     """
     Wire TelegramBotService with factory callables.
@@ -50,6 +52,7 @@ def _build_telegram_bot_service(
             gemini_service,
             ml_model_service,
             ai_detection_repo,
+            normalization_service,
         )
         return TelegramDetectionService(ai_detection_svc)
 
@@ -80,9 +83,12 @@ async def main():
         session_maker = await container.get(async_sessionmaker[AsyncSession])
         gemini_svc = await container.get(GeminiTextExtractor)
         ml_svc = await container.get(AIDetectionModelService)
+        norm_svc = await container.get(TextNormalizationService)
 
         # Build bot with factory pattern
-        telegram_bot = _build_telegram_bot_service(session_maker, gemini_svc, ml_svc)
+        telegram_bot = _build_telegram_bot_service(
+            session_maker, gemini_svc, ml_svc, norm_svc,
+        )
 
         if not telegram_bot.bot:
             logger.error("telegram_bot_not_configured")

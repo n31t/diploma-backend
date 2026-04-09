@@ -2,17 +2,13 @@
 URL Detection service.
 
 Orchestrates the full pipeline:
-  NewspaperService → (optional TextCleaner) → AIDetectionModelService → history/limits
-
-newspaper4k already returns clean plain text, so a heavy Markdown-stripping
-step is no longer needed. We still run a light normalisation pass (collapse
-excess whitespace, strip control characters) before sending text to the model.
+  NewspaperService → TextNormalizationService → AIDetectionModelService → history/limits
 """
 
 from __future__ import annotations
 
-import re
 import time
+from dataclasses import asdict
 
 from src.api.v1.schemas.detection_language import (
     DetectionLanguageContext,
@@ -24,29 +20,10 @@ from src.dtos.limits_dto import UserLimitDTO
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.ml_model_service import AIDetectionModelService
 from src.services.newspaper_service import NewspaperService
+from src.services.text_normalization_service import TextNormalizationService
 
 logger = get_logger(__name__)
 
-# ── Light post-processing ─────────────────────────────────────────────────────
-
-_CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_MULTI_BLANK = re.compile(r"\n{3,}")
-
-
-def _normalise(text: str) -> str:
-    """
-    Minimal cleanup of newspaper-extracted text.
-
-    - Strip ASCII control characters (newspaper occasionally leaves them in).
-    - Collapse 3+ consecutive blank lines to 2.
-    - Strip leading/trailing whitespace.
-    """
-    text = _CTRL_CHARS.sub("", text)
-    text = _MULTI_BLANK.sub("\n\n", text)
-    return text.strip()
-
-
-# ── Service ───────────────────────────────────────────────────────────────────
 
 class URLDetectionService:
     """
@@ -56,10 +33,10 @@ class URLDetectionService:
     --------
     1. Check user limits (daily / monthly).
     2. Download page + extract article text via NewspaperService.
-    3. Light normalisation pass.
+    3. Normalize text via TextNormalizationService.
     4. Validate minimum text length.
     5. Resolve effective language from extracted text (if auto was requested).
-    6. Run ML inference (AIDetectionModelService → ml-api microservice).
+    6. Run ML inference (AIDetectionModelService -> ml-api microservice).
     7. Persist detection record + increment usage counters.
     8. Return AIDetectionResultDTO + updated UserLimitDTO.
     """
@@ -69,10 +46,12 @@ class URLDetectionService:
         newspaper_service: NewspaperService,
         ml_model_service: AIDetectionModelService,
         ai_detection_repository: AIDetectionRepository,
+        normalization_service: TextNormalizationService,
     ) -> None:
         self._newspaper = newspaper_service
         self._model = ml_model_service
         self._repo = ai_detection_repository
+        self._normalizer = normalization_service
 
     async def detect_from_url(
         self,
@@ -81,21 +60,7 @@ class URLDetectionService:
         *,
         language: DetectionLanguageContext,
     ) -> tuple[AIDetectionResultDTO, UserLimitDTO]:
-        """
-        Run the full URL → detection pipeline for a user.
-
-        Args:
-            url:      Full HTTP/HTTPS URL of the article to analyse.
-            user_id:  Authenticated user's ULID.
-            language: Language context from request.
-
-        Returns:
-            Tuple of (AIDetectionResultDTO, UserLimitDTO).
-
-        Raises:
-            ValueError:   Limit exceeded / URL invalid / too little text.
-            RuntimeError: Network error or ML microservice unavailable.
-        """
+        """Run the full URL -> detection pipeline for a user."""
         start_time = time.time()
         logger.info(
             "url_detection_start",
@@ -105,7 +70,7 @@ class URLDetectionService:
             language_effective=language.effective,
         )
 
-        # ── 1. Check limits ────────────────────────────────────────────────
+        # 1. Check limits
         can_request, user_limit = await self._repo.can_make_request(user_id)
         if not can_request:
             logger.warning(
@@ -122,25 +87,26 @@ class URLDetectionService:
                 f"Monthly: {user_limit.monthly_used}/{user_limit.monthly_limit}"
             )
 
-        # ── 2. Fetch & extract article ─────────────────────────────────────
+        # 2. Fetch & extract article
         article = await self._newspaper.fetch_article(url)
 
-        # ── 3. Normalise ───────────────────────────────────────────────────
-        plain_text = _normalise(article.text)
+        # 3. Normalize
+        norm = self._normalizer.normalize(article.text, source_format="url")
+        plain_text = norm.normalized_text
 
         if not plain_text:
             raise ValueError(
                 f"No readable text could be extracted from {url}."
             )
 
-        # ── 4. Validate minimum length ─────────────────────────────────────
+        # 4. Validate minimum length
         if not self._model.validate_text(plain_text):
             raise ValueError(
                 f"The page at {url} does not contain enough text for analysis "
                 f"(minimum 50 characters required)."
             )
 
-        # ── 5. Resolve language from extracted text (handles auto) ─────────
+        # 5. Resolve language from extracted text (handles auto)
         language = resolve_effective_language(plain_text, language)
 
         logger.info(
@@ -150,13 +116,13 @@ class URLDetectionService:
             language_effective=language.effective,
         )
 
-        # ── 6. ML inference ────────────────────────────────────────────────
+        # 6. ML inference
         result, confidence = await self._model.detect_ai_text(
             plain_text, language=language.effective
         )
         processing_time_ms = int((time.time() - start_time) * 1000)
 
-        # ── 7. Persist ─────────────────────────────────────────────────────
+        # 7. Persist
         updated_limit = await self._repo.increment_usage(user_id)
 
         await self._repo.create_history_record(
@@ -164,14 +130,14 @@ class URLDetectionService:
             source="url",
             result=result.value,
             confidence=confidence,
-            text_preview=plain_text[:500],
+            text_preview=norm.raw_text[:500],
             text_length=len(plain_text),
             word_count=len(plain_text.split()),
             file_name=url,
             processing_time_ms=processing_time_ms,
         )
 
-        # ── 8. Build response DTOs ─────────────────────────────────────────
+        # 8. Build response DTOs
         detection_result = AIDetectionResultDTO(
             result=result,
             confidence=confidence,
@@ -188,6 +154,8 @@ class URLDetectionService:
                 "processing_time_ms": processing_time_ms,
                 "language_requested": language.requested,
                 "language_effective": language.effective,
+                "normalization": asdict(norm.metadata),
+                "quality_flags": asdict(norm.quality_flags),
             },
         )
 

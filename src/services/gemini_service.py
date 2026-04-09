@@ -21,6 +21,7 @@ from pptx import Presentation
 
 from src.core.gemini_config import gemini_config
 from src.core.logging import get_logger
+from src.dtos.normalization_dto import StructuredBlock
 
 logger = get_logger(__name__)
 
@@ -67,44 +68,114 @@ def _resolve_upload_mime_type(file_name: str, content_type: str | None) -> str:
     )
 
 
-def _extract_docx_text(path: str) -> str:
+_ExtractionResult = tuple[str, list[StructuredBlock]]
+
+
+def _extract_docx_text(path: str) -> _ExtractionResult:
     doc = DocxDocument(path)
-    parts: list[str] = []
+    text_parts: list[str] = []
+    blocks: list[StructuredBlock] = []
+
     for p in doc.paragraphs:
         t = p.text.strip()
         if t:
-            parts.append(t)
+            text_parts.append(t)
+
+    # Tables as structured blocks
     for table in doc.tables:
+        rows: list[str] = []
         for row in table.rows:
+            seen: set[str] = set()
+            cells: list[str] = []
             for cell in row.cells:
-                for cp in cell.paragraphs:
-                    t = cp.text.strip()
-                    if t:
-                        parts.append(t)
-    return "\n".join(parts)
+                cell_text = cell.text.strip()
+                if cell_text and cell_text not in seen:
+                    seen.add(cell_text)
+                    cells.append(cell_text)
+            if cells:
+                rows.append(" | ".join(cells))
+
+        if rows:
+            blocks.append(StructuredBlock(
+                type="table",
+                content="\n".join(rows),
+            ))
+            text_parts.append("\n".join(rows))
+
+    return "\n".join(text_parts), blocks
 
 
-def _extract_pptx_text(path: str) -> str:
+def _extract_pptx_text(path: str) -> _ExtractionResult:
     prs = Presentation(path)
-    parts: list[str] = []
-    for slide in prs.slides:
+    text_parts: list[str] = []
+    blocks: list[StructuredBlock] = []
+
+    for slide_idx, slide in enumerate(prs.slides, start=1):
+        title_text = ""
+        body_parts: list[str] = []
+
+        if slide.shapes.title and slide.shapes.title.text:
+            title_text = slide.shapes.title.text.strip()
+
         for shape in slide.shapes:
             if hasattr(shape, "text"):
                 t = (shape.text or "").strip()
-                if t:
-                    parts.append(t)
-    return "\n".join(parts)
+                if not t:
+                    continue
+                if shape == slide.shapes.title:
+                    continue
+                body_parts.append(t)
+
+        notes_text = ""
+        if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+            notes_text = slide.notes_slide.notes_text_frame.text.strip()
+
+        slide_content_parts: list[str] = []
+        if title_text:
+            slide_content_parts.append(title_text)
+        if body_parts:
+            slide_content_parts.extend(body_parts)
+        if notes_text:
+            slide_content_parts.append(notes_text)
+
+        slide_text = "\n".join(slide_content_parts)
+        if slide_text:
+            text_parts.append(slide_text)
+
+        block_content_parts: list[str] = []
+        if title_text:
+            block_content_parts.append(f"[TITLE] {title_text}")
+        if body_parts:
+            block_content_parts.append(f"[BODY]\n" + "\n".join(body_parts) + "\n[/BODY]")
+        if notes_text:
+            block_content_parts.append(f"[NOTES]\n{notes_text}\n[/NOTES]")
+
+        if block_content_parts:
+            blocks.append(StructuredBlock(
+                type="slide",
+                content="\n".join(block_content_parts),
+                index=slide_idx,
+            ))
+
+    return "\n".join(text_parts), blocks
 
 
-def _extract_txt_or_html(path: str, ext: str) -> str:
+_HTML_STRIP_TAGS = frozenset({"script", "style", "noscript", "nav"})
+
+
+def _extract_txt_or_html(path: str, ext: str) -> _ExtractionResult:
     raw = Path(path).read_bytes()
     if ext == ".html":
         tree = lxml_html.fromstring(raw)
-        return tree.text_content()
-    return raw.decode("utf-8", errors="replace")
+        for tag_name in _HTML_STRIP_TAGS:
+            for el in tree.iter(tag_name):
+                el.getparent().remove(el)
+        text = lxml_html.tostring(tree, method="text", encoding="unicode")
+        return text, []
+    return raw.decode("utf-8", errors="replace"), []
 
 
-def _extract_text_locally(file_path: str, ext: str) -> str:
+def _extract_text_locally(file_path: str, ext: str) -> _ExtractionResult:
     if ext == ".docx":
         return _extract_docx_text(file_path)
     if ext == ".pptx":
@@ -133,20 +204,23 @@ class GeminiTextExtractor:
         file_path: str,
         file_name: str,
         content_type: str | None = None,
-    ) -> str:
-        """
-        Extract text from a file using Gemini.
+    ) -> tuple[str, list[StructuredBlock]]:
+        """Extract text (and optional structured blocks) from a file.
+
+        Local extraction returns structured blocks for DOCX / PPTX.
+        Gemini-based extraction (PDF / images) returns an empty block list.
 
         Args:
-            file_path: Path to the temporary file
-            file_name: Original name of the file
-            content_type: MIME type from the client upload (strongly recommended)
+            file_path: Path to the temporary file.
+            file_name: Original name of the file.
+            content_type: MIME type from the client upload (strongly recommended).
 
         Returns:
-            Extracted text content
+            ``(extracted_text, structured_blocks)``
 
         Raises:
-            Exception: If text extraction fails
+            RuntimeError: If text extraction fails.
+            ValueError:   If the format is unsupported (``.doc``).
         """
         ext = os.path.splitext(file_name)[1].lower()
 
@@ -163,7 +237,9 @@ class GeminiTextExtractor:
                     file_name=file_name,
                     extension=ext,
                 )
-                text = await asyncio.to_thread(_extract_text_locally, file_path, ext)
+                text, blocks = await asyncio.to_thread(
+                    _extract_text_locally, file_path, ext,
+                )
                 text = (text or "").strip()
                 if not text:
                     raise ValueError("No readable text found in document")
@@ -172,8 +248,9 @@ class GeminiTextExtractor:
                     file_name=file_name,
                     text_length=len(text),
                     source="local",
+                    structured_blocks=len(blocks),
                 )
-                return text
+                return text, blocks
             except Exception as e:
                 logger.error(
                     "text_extraction_failed",
@@ -233,7 +310,7 @@ class GeminiTextExtractor:
                 source="gemini",
             )
 
-            return out
+            return out, []
 
         except Exception as e:
             logger.error(

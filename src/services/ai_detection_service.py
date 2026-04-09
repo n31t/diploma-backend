@@ -5,6 +5,7 @@ AI Detection service layer with limits and history tracking.
 import os
 import tempfile
 import time
+from dataclasses import asdict
 
 from src.api.v1.schemas.detection_language import (
     DetectionLanguageContext,
@@ -20,6 +21,7 @@ from src.dtos.limits_dto import UserLimitDTO
 from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.ml_model_service import AIDetectionModelService
+from src.services.text_normalization_service import TextNormalizationService
 
 logger = get_logger(__name__)
 
@@ -32,10 +34,12 @@ class AIDetectionService:
         gemini_service: GeminiTextExtractor,
         ml_model_service: AIDetectionModelService,
         ai_detection_repository: AIDetectionRepository,
+        normalization_service: TextNormalizationService,
     ):
         self.gemini_service = gemini_service
         self.ml_model_service = ml_model_service
         self.ai_detection_repository = ai_detection_repository
+        self.normalization_service = normalization_service
 
     async def check_user_limits(self, user_id: str) -> UserLimitDTO:
         """
@@ -94,12 +98,16 @@ class AIDetectionService:
         """
         start_time = time.time()
 
-        # Text is available here — resolve auto language from it
-        language = resolve_effective_language(text, language)
+        # Normalize
+        norm = self.normalization_service.normalize(text, source_format="text")
+        normalized_text = norm.normalized_text
+
+        # Resolve auto language from normalized text
+        language = resolve_effective_language(normalized_text, language)
 
         logger.info(
             "detecting_from_text",
-            text_length=len(text),
+            text_length=len(normalized_text),
             user_id=user_id,
             language_requested=language.requested,
             language_effective=language.effective,
@@ -109,46 +117,43 @@ class AIDetectionService:
         await self.check_user_limits(user_id)
 
         # Validate text
-        if not self.ml_model_service.validate_text(text):
+        if not self.ml_model_service.validate_text(normalized_text):
             raise ValueError("Text is too short or invalid. Minimum 50 characters required.")
 
         try:
-            # Run AI detection
             result, confidence = await self.ml_model_service.detect_ai_text(
-                text, language=language.effective
+                normalized_text, language=language.effective
             )
 
-            # Calculate processing time
             processing_time_ms = int((time.time() - start_time) * 1000)
 
-            # Create result DTO
             detection_result = AIDetectionResultDTO(
                 result=result,
                 confidence=confidence,
-                text_preview=text[:200],
+                text_preview=normalized_text[:200],
                 source=DetectionSource.TEXT,
                 file_name=None,
                 metadata={
-                    "text_length": len(text),
-                    "word_count": len(text.split()),
+                    "text_length": len(normalized_text),
+                    "word_count": len(normalized_text.split()),
                     "processing_time_ms": processing_time_ms,
                     "language_requested": language.requested,
                     "language_effective": language.effective,
+                    "normalization": asdict(norm.metadata),
+                    "quality_flags": asdict(norm.quality_flags),
                 }
             )
 
-            # Increment usage
             user_limit = await self.ai_detection_repository.increment_usage(user_id)
 
-            # Save to history
             await self.ai_detection_repository.create_history_record(
                 user_id=user_id,
                 source="text",
                 result=result.value,
                 confidence=confidence,
-                text_preview=text[:500],
-                text_length=len(text),
-                word_count=len(text.split()),
+                text_preview=norm.raw_text[:500],
+                text_length=len(normalized_text),
+                word_count=len(normalized_text.split()),
                 processing_time_ms=processing_time_ms
             )
 
@@ -217,24 +222,30 @@ class AIDetectionService:
 
         temp_path = None
         try:
-            # Save file to temporary location
             temp_path = await self._save_temp_file(file_content, file_name)
 
-            # Extract text using Gemini
             logger.info("extracting_text_from_file", file_name=file_name, user_id=user_id)
-            extracted_text = await self.gemini_service.extract_text_from_file(
+            extracted_text, structured_blocks = await self.gemini_service.extract_text_from_file(
                 temp_path, file_name, content_type=content_type
             )
 
-            # Validate extracted text
-            if not self.ml_model_service.validate_text(extracted_text):
+            # Normalize extracted text
+            file_ext = os.path.splitext(file_name)[1].lower().lstrip(".")
+            source_fmt = file_ext if file_ext else "text"
+            norm = self.normalization_service.normalize(
+                extracted_text,
+                source_format=source_fmt,
+                structured_blocks=structured_blocks or None,
+            )
+            normalized_text = norm.normalized_text
+
+            if not self.ml_model_service.validate_text(normalized_text):
                 raise ValueError(
                     "Extracted text is too short or invalid. "
                     "The file may not contain enough text content."
                 )
 
-            # Text is now available — resolve auto language from extracted text
-            language = resolve_effective_language(extracted_text, language)
+            language = resolve_effective_language(normalized_text, language)
 
             logger.info(
                 "file_language_resolved",
@@ -243,44 +254,41 @@ class AIDetectionService:
                 language_effective=language.effective,
             )
 
-            # Run AI detection on extracted text
             result, confidence = await self.ml_model_service.detect_ai_text(
-                extracted_text, language=language.effective
+                normalized_text, language=language.effective
             )
 
-            # Calculate processing time
             processing_time_ms = int((time.time() - start_time) * 1000)
 
-            # Create result DTO
             detection_result = AIDetectionResultDTO(
                 result=result,
                 confidence=confidence,
-                text_preview=extracted_text[:200],
+                text_preview=normalized_text[:200],
                 source=DetectionSource.FILE,
                 file_name=file_name,
                 metadata={
                     "file_size": len(file_content),
                     "content_type": content_type,
-                    "extracted_text_length": len(extracted_text),
-                    "word_count": len(extracted_text.split()),
+                    "extracted_text_length": len(normalized_text),
+                    "word_count": len(normalized_text.split()),
                     "processing_time_ms": processing_time_ms,
                     "language_requested": language.requested,
                     "language_effective": language.effective,
+                    "normalization": asdict(norm.metadata),
+                    "quality_flags": asdict(norm.quality_flags),
                 }
             )
 
-            # Increment usage
             user_limit = await self.ai_detection_repository.increment_usage(user_id)
 
-            # Save to history
             await self.ai_detection_repository.create_history_record(
                 user_id=user_id,
                 source="file",
                 result=result.value,
                 confidence=confidence,
-                text_preview=extracted_text[:500],
-                text_length=len(extracted_text),
-                word_count=len(extracted_text.split()),
+                text_preview=norm.raw_text[:500],
+                text_length=len(normalized_text),
+                word_count=len(normalized_text.split()),
                 file_name=file_name,
                 file_size=len(file_content),
                 content_type=content_type,
