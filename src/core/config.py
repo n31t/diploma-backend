@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -21,6 +22,9 @@ class Config(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 48
     PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 24
+    # Registration: DNS check that the domain exists and can receive mail (email-validator).
+    EMAIL_CHECK_DELIVERABILITY: bool = True
+    EMAIL_DNS_VALIDATION_TIMEOUT: int = Field(default=10, ge=1, le=120)
 
     # Telegram Configuration
     TELEGRAM_BOT_TOKEN: Optional[str] = None

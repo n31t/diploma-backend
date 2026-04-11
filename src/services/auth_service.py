@@ -7,11 +7,13 @@ login, and token management. Services work with DTOs, not Pydantic schemas.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src.core.config import Config
+from src.core.email_validation import validate_deliverable_email
 from src.core.google_oauth_error import (
     GoogleOAuthError,
     ACCOUNT_INACTIVE,
@@ -73,15 +75,23 @@ class AuthService:
     ) -> TokenDTO:
         logger.info("registering_user", username=user_data.username, email=user_data.email)
 
+        email = user_data.email
+        if self.config.EMAIL_CHECK_DELIVERABILITY:
+            email = await asyncio.to_thread(
+                validate_deliverable_email,
+                user_data.email,
+                self.config.EMAIL_DNS_VALIDATION_TIMEOUT,
+            )
+
         if await self.auth_repository.get_user_by_username(user_data.username):
             raise ValueError("Username already exists")
-        if await self.auth_repository.get_user_by_email(user_data.email):
+        if await self.auth_repository.get_user_by_email(email):
             raise ValueError("Email already exists")
 
         hashed_password = hash_password(user_data.password)
         user = await self.auth_repository.create_user(
             username=user_data.username,
-            email=user_data.email,
+            email=email,
             hashed_password=hashed_password,
             is_verified=False,
         )

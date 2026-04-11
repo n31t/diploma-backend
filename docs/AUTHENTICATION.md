@@ -29,7 +29,7 @@
 
 - **Тело (JSON):** схема `UserRegister` — `src/api/v1/schemas/user.py`
   - `username`: строка 3–50 символов, только `a-zA-Z0-9_-` (после `strip`).
-  - `email`: валидный email (`EmailStr`).
+  - `email`: валидный email (`EmailStr`); при включённой проверке доставляемости (`EMAIL_CHECK_DELIVERABILITY=true` по умолчанию) в `AuthService.register_user` дополнительно выполняется DNS-проверка домена через `email-validator` (`check_deliverability`), адрес сохраняется в нормализованном виде. Отключение: переменная окружения `EMAIL_CHECK_DELIVERABILITY=false` (например для тестов без DNS). Таймаут DNS (секунды): `EMAIL_DNS_VALIDATION_TIMEOUT` (по умолчанию `10`).
   - `password`: 8–100 символов, минимум одна заглавная, одна строчная, одна цифра.
 - **Ответ 201:** `TokenResponse` — `access_token`, `refresh_token`, `token_type` (по умолчанию `"bearer"`).
 - **400:** валидация Pydantic или бизнес-ошибка (`ValueError`, например «Username already exists» / «Email already exists») — в `detail` передаётся текст исключения.
