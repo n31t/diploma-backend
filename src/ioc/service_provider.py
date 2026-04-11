@@ -98,6 +98,7 @@ class ServiceProvider(Provider):
     def get_telegram_detection_service(
         self,
         ai_detection_service: AIDetectionService,
+        url_detection_service: URLDetectionService,
     ) -> TelegramDetectionService:
         """
         Telegram-specific detection façade.
@@ -105,7 +106,7 @@ class ServiceProvider(Provider):
         Scoped to REQUEST so it shares the same AIDetectionService
         (and therefore the same DB session) as the rest of the request graph.
         """
-        return TelegramDetectionService(ai_detection_service)
+        return TelegramDetectionService(ai_detection_service, url_detection_service)
 
     @provide(scope=Scope.REQUEST)
     def get_stripe_service(

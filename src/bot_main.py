@@ -6,21 +6,19 @@ Shares the same domain logic, services, and database.
 """
 
 import asyncio
-from contextlib import asynccontextmanager
 
 from dishka import make_async_container
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src.core.config import config, Config
 from src.core.logging import get_logger, setup_logging
 from src.db.database import check_db_connection
+from src.infrastructure.redis_client import RedisClient, create_redis_client
 from src.ioc import AppProvider
-from src.repositories.auth_repository import AuthRepository
-from src.repositories.ai_detection_repository import AIDetectionRepository
 from src.services.gemini_service import GeminiTextExtractor
 from src.services.ml_model_service import AIDetectionModelService
-from src.services.ai_detection_service import AIDetectionService
-from src.services.telegram_detection_service import TelegramDetectionService
+from src.services.newspaper_service import NewspaperService
 from src.services.telegram_bot_service import TelegramBotService
 from src.services.text_normalization_service import TextNormalizationService
 
@@ -32,49 +30,14 @@ setup_logging(
 logger = get_logger(__name__)
 
 
-def _build_telegram_bot_service(
-        session_maker: async_sessionmaker[AsyncSession],
-        gemini_service: GeminiTextExtractor,
-        ml_model_service: AIDetectionModelService,
-        normalization_service: TextNormalizationService,
-) -> TelegramBotService:
-    """
-    Wire TelegramBotService with factory callables.
-
-    Each Telegram message gets its own unit-of-work (session + services).
-    This is the same pattern used in FastAPI requests, just applied to
-    Telegram messages instead.
-    """
-
-    def detection_service_factory(session: AsyncSession) -> TelegramDetectionService:
-        ai_detection_repo = AIDetectionRepository(session)
-        ai_detection_svc = AIDetectionService(
-            gemini_service,
-            ml_model_service,
-            ai_detection_repo,
-            normalization_service,
-        )
-        return TelegramDetectionService(ai_detection_svc)
-
-    def auth_repository_factory(session: AsyncSession) -> AuthRepository:
-        return AuthRepository(session)
-
-    return TelegramBotService(
-        session_factory=session_maker,
-        detection_service_factory=detection_service_factory,
-        auth_repository_factory=auth_repository_factory,
-    )
-
-
 async def main():
     """Main entry point for the Telegram bot."""
     logger.info("telegram_bot_starting", app_name=config.APP_NAME)
 
-    # Create Dishka container with same providers as FastAPI
     container = make_async_container(AppProvider(), context={Config: config})
+    redis_connection: Redis | None = None
 
     try:
-        # Get APP-scoped dependencies (singletons)
         engine = await container.get(AsyncEngine)
         if not await check_db_connection(engine):
             raise RuntimeError("Database connection failed at startup")
@@ -84,17 +47,25 @@ async def main():
         gemini_svc = await container.get(GeminiTextExtractor)
         ml_svc = await container.get(AIDetectionModelService)
         norm_svc = await container.get(TextNormalizationService)
+        newspaper_svc = await container.get(NewspaperService)
 
-        # Build bot with factory pattern
-        telegram_bot = _build_telegram_bot_service(
-            session_maker, gemini_svc, ml_svc, norm_svc,
+        redis_connection = await create_redis_client()
+        redis_client: RedisClient | None = RedisClient(redis_connection)
+
+        telegram_bot = TelegramBotService(
+            session_factory=session_maker,
+            app_config=config,
+            gemini_service=gemini_svc,
+            ml_model_service=ml_svc,
+            normalization_service=norm_svc,
+            newspaper_service=newspaper_svc,
+            redis_client=redis_client,
         )
 
         if not telegram_bot.bot:
             logger.error("telegram_bot_not_configured")
             raise RuntimeError("TELEGRAM_BOT_TOKEN not set in environment")
 
-        # Start bot (blocking call)
         logger.info("telegram_bot_ready")
         await telegram_bot.start()
 
@@ -110,6 +81,11 @@ async def main():
         raise
     finally:
         await container.close()
+        if redis_connection is not None:
+            try:
+                await redis_connection.close()
+            except Exception as exc:
+                logger.warning("redis_close_error", error=str(exc))
         logger.info("telegram_bot_shutdown")
 
 

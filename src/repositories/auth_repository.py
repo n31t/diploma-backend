@@ -279,6 +279,44 @@ class AuthRepository:
         await self.session.refresh(user)
         return user
 
+    async def set_telegram_detection_language(
+        self, user_id: str, lang: str
+    ) -> Optional[User]:
+        """Persist ML detection language for Telegram: ru, kk, or auto."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        user.telegram_detection_language = lang
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
+
+    async def set_telegram_ui_locale(self, user_id: str, locale: str) -> Optional[User]:
+        """Persist UI locale for Telegram bot: ru, kk, or en."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        user.telegram_ui_locale = locale
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user
+
+    async def ensure_telegram_ui_locale_from_client(
+        self, user_id: str, telegram_language_code: str | None
+    ) -> None:
+        """
+        If telegram_ui_locale is unset, set it once from Telegram's language_code.
+
+        Mapping: ru -> ru; kk/kz -> kk; else en.
+        """
+        user = await self.get_user_by_id(user_id)
+        if not user or user.telegram_ui_locale is not None:
+            return
+        user.telegram_ui_locale = map_telegram_language_code_to_ui_locale(
+            telegram_language_code
+        )
+        await self.session.flush()
+
     # ── Password reset ─────────────────────────────────────────────────────
 
     async def create_password_reset_token(
@@ -434,3 +472,15 @@ class AuthRepository:
             counter += 1
             if counter > 10_000:
                 raise RuntimeError("Could not allocate unique username")
+
+
+def map_telegram_language_code_to_ui_locale(code: str | None) -> str:
+    """Map Telegram User.language_code to our UI locale (ru | kk | en)."""
+    if not code:
+        return "en"
+    primary = code.lower().split("-")[0]
+    if primary == "ru":
+        return "ru"
+    if primary in ("kk", "kz"):
+        return "kk"
+    return "en"

@@ -35,6 +35,13 @@ class User(ULIDMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Telegram bot: ML detection language preference (ru | kk | auto); NULL = auto
+    telegram_detection_language: Mapped[Optional[str]] = mapped_column(
+        String(8), nullable=True
+    )
+    # Telegram bot UI locale (ru | kk | en); NULL = derive from Telegram client once
+    telegram_ui_locale: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+
 
 class RegistrationToken(ULIDMixin, TimestampMixin, Base):
     __tablename__ = "registration_tokens"
