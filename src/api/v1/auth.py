@@ -16,6 +16,7 @@ from src.api.v1.schemas.user import (
     UserRegister,
     UserLogin,
     GoogleOAuthLoginRequest,
+    RefreshTokenRequest,
     TokenResponse,
     UserResponse,
     VerifyEmailRequest,
@@ -155,6 +156,43 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to login"
+        )
+
+
+@router.post("/refresh", response_model=TokenResponse, status_code=status.HTTP_200_OK)
+async def refresh_tokens(
+    body: RefreshTokenRequest,
+    request: Request,
+    service: FromDishka[AuthService],
+):
+    """
+    Exchange a valid refresh token for a new access token and a new refresh token (rotation).
+    """
+    try:
+        user_agent = request.headers.get("user-agent")
+        ip_address = request.client.host if request.client else None
+        return await service.refresh_session(
+            refresh_token_raw=body.refresh_token,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+    except ValueError as e:
+        logger.warning("refresh_token_rejected", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except Exception as e:
+        logger.error(
+            "refresh_token_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh session",
         )
 
 

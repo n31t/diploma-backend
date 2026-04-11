@@ -17,6 +17,7 @@
 |--------|------|------------|
 | `POST` | `/api/v1/auth/register` | Регистрация (`is_verified=false`, письмо с ссылкой) |
 | `POST` | `/api/v1/auth/login` | Вход |
+| `POST` | `/api/v1/auth/refresh` | Обмен refresh на новую пару access + refresh (ротация) |
 | `GET` | `/api/v1/auth/me` | Текущий пользователь (требует Bearer) |
 | `POST` | `/api/v1/auth/verify-email` | Подтверждение email по одноразовому токену (публичный) |
 | `POST` | `/api/v1/auth/resend-verification` | Повторная отправка ссылки (Bearer) |
@@ -31,7 +32,7 @@
   - `username`: строка 3–50 символов, только `a-zA-Z0-9_-` (после `strip`).
   - `email`: валидный email (`EmailStr`); при включённой проверке доставляемости (`EMAIL_CHECK_DELIVERABILITY=true` по умолчанию) в `AuthService.register_user` дополнительно выполняется DNS-проверка домена через `email-validator` (`check_deliverability`), адрес сохраняется в нормализованном виде. Отключение: переменная окружения `EMAIL_CHECK_DELIVERABILITY=false` (например для тестов без DNS). Таймаут DNS (секунды): `EMAIL_DNS_VALIDATION_TIMEOUT` (по умолчанию `10`).
   - `password`: 8–100 символов, минимум одна заглавная, одна строчная, одна цифра.
-- **Ответ 201:** `TokenResponse` — `access_token`, `refresh_token`, `token_type` (по умолчанию `"bearer"`).
+- **Ответ 201:** `TokenResponse` — `access_token`, `refresh_token`, `token_type` (по умолчанию `"bearer"`), `expires_in` (секунды жизни access-токена).
 - **400:** валидация Pydantic или бизнес-ошибка (`ValueError`, например «Username already exists» / «Email already exists») — в `detail` передаётся текст исключения.
 - **500:** прочие ошибки — `detail`: `"Failed to register user"`.
 
@@ -43,9 +44,16 @@
 
 - **Тело (JSON):** `UserLogin` — поле `login` (3–100 символов), `password` (`min_length=1` на схеме).
 - **Разбор `login`:** в `AuthService.login_user` — если в строке есть `"@"`, поиск пользователя по **email**, иначе по **username**.
-- **Ответ 200:** `TokenResponse` (как при регистрации).
+- **Ответ 200:** `TokenResponse` (как при регистрации), включая `expires_in`.
 - **401:** неверные учётные данные или неактивный аккаунт — сообщения из `ValueError`: `"Invalid credentials"`, `"Account is inactive"`.
 - **500:** `detail`: `"Failed to login"`.
+
+### POST `/api/v1/auth/refresh`
+
+- **Тело (JSON):** `{"refresh_token": "<строка из ответа login/register/google>"}` — схема `RefreshTokenRequest` (`src/api/v1/schemas/user.py`), пробелы по краям обрезаются.
+- **Ответ 200:** `TokenResponse` — новая пара `access_token` + `refresh_token`, поле `expires_in`. Предыдущая строка refresh в БД помечается `is_revoked=true` (**ротация**); при успешном обмене создаётся новая запись в `refresh_tokens`.
+- **401:** неверный, просроченный или отозванный refresh, неактивный пользователь — `detail` с текстом (`Invalid or expired refresh token`, `Account is inactive` и т.д.), заголовок `WWW-Authenticate: Bearer` где задано в коде.
+- **500:** `detail`: `"Failed to refresh session"`.
 
 ### GET `/api/v1/auth/me`
 
@@ -56,7 +64,7 @@
 ### POST `/api/v1/auth/google`
 
 - **Тело:** `GoogleOAuthLoginRequest` — `code` (authorization code от Google), `redirect_uri` (должен **точно** совпадать с одним из значений в `GOOGLE_ALLOWED_REDIRECT_URIS`; для фронта с `@react-oauth/google` в режиме auth-code обычно `postmessage`).
-- **Ответ 200:** `TokenResponse`, как у `/login`.
+- **Ответ 200:** `TokenResponse`, как у `/login` (включая `expires_in`).
 - **400 / 403 / 503:** JSON `{"detail": "...", "code": "..."}` — коды: `GOOGLE_OAUTH_DISABLED`, `GOOGLE_OAUTH_NOT_CONFIGURED`, `INVALID_REDIRECT_URI`, `INVALID_GOOGLE_CODE`, `GOOGLE_EMAIL_NOT_VERIFIED`, `OAUTH_ACCOUNT_CONFLICT`, `ACCOUNT_INACTIVE` (неактивный пользователь — 403).
 
 **Политика связывания аккаунтов:**
@@ -100,7 +108,7 @@
 
 ### Refresh по HTTP
 
-В docstring модуля `src/api/v1/auth.py` упоминается «token refresh», но **эндпоинта обмена refresh на новый access нет**. При каждом успешном `register` и `login` в БД создаётся новая строка refresh; клиент получает пару токенов в теле ответа, дальнейшее использование refresh в API не реализовано.
+Реализован обмен: `POST /api/v1/auth/refresh` (см. выше). Клиент передаёт сохранённый `refresh_token`; сервис `AuthService.refresh_session` находит неотозванную непросроченную запись, отзывает её, выдаёт новый access JWT и новый refresh (**ротация**).
 
 ---
 
@@ -132,7 +140,9 @@
 | Поля | `token` (unique), `user_id`, `expires_at`, `is_revoked`, опционально `user_agent`, `ip_address` |
 | Срок жизни | `now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)`; дни из `Config.REFRESH_TOKEN_EXPIRE_DAYS` (по умолчанию `7`) |
 
-**Пробел реализации:** в `AuthRepository` нет методов поиска/валидации refresh по значению токена, нет отзыва/ротации и нет HTTP-роута — только `create_refresh_token`. Это место зарезервировано под будущий refresh-flow.
+**Реализация:** `AuthRepository.get_valid_refresh_token_by_value`, `revoke_refresh_token_by_id`, `create_refresh_token`; успешный `POST /auth/refresh` отзывает использованный refresh и создаёт новый. При сбросе пароля вызывается `revoke_all_refresh_tokens_for_user`.
+
+**Ответ с access:** поле `expires_in` в `TokenResponse` равно `ACCESS_TOKEN_EXPIRE_MINUTES * 60` секунд — клиент может выставить TTL cookie access без дублирования константы.
 
 ---
 
@@ -273,7 +283,12 @@ sequenceDiagram
     Svc->>Repo: create_refresh_token
     Repo->>DB: INSERT refresh_tokens
     Svc-->>API: TokenDTO
-    API-->>Client: access_token + refresh_token
+    API-->>Client: access_token + refresh_token + expires_in
+
+    Client->>API: POST /auth/refresh
+    API->>Svc: refresh_session
+    Svc->>Repo: get_valid_refresh_token_by_value, revoke_refresh_token_by_id, create_refresh_token
+    API-->>Client: new tokens + expires_in
 
     Client->>API: GET защищённый ядро (Bearer)
     API->>Repo: require_verified_user
@@ -286,7 +301,6 @@ sequenceDiagram
 
 ## Зачатки для следующих задач
 
-1. **Refresh HTTP-flow:** обмен refresh на новый access, эндпоинт вида `POST /api/v1/auth/refresh`.
-2. **Почта:** при наличии `SMTP_HOST` используется `SmtpEmailService` (`build_email_service` в `src/services/email_service.py`).
+1. **Почта:** при наличии `SMTP_HOST` используется `SmtpEmailService` (`build_email_service` в `src/services/email_service.py`).
 
 Интеграция с фронтендом: репозиторий `diploma-front` (маршруты `/verify-email`, `/check-email`, баннер в дашборде). Краткий контракт: [docs/FRONTEND_EMAIL_VERIFICATION.md](FRONTEND_EMAIL_VERIFICATION.md).

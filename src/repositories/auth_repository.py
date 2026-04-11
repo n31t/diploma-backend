@@ -126,6 +126,27 @@ class AuthRepository:
         await self.session.refresh(refresh_token)
         return refresh_token
 
+    async def get_valid_refresh_token_by_value(
+        self, token: str
+    ) -> Optional[RefreshToken]:
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            select(RefreshToken).where(
+                RefreshToken.token == token,
+                RefreshToken.is_revoked.is_(False),
+                RefreshToken.expires_at > now,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def revoke_refresh_token_by_id(self, token_id: str) -> None:
+        await self.session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.id == token_id)
+            .values(is_revoked=True)
+        )
+        await self.session.flush()
+
     async def get_user_by_id(self, user_id: str) -> Optional[User]:
         """
         Get a user by ID.

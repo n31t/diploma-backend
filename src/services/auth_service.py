@@ -141,7 +141,33 @@ class AuthService:
             user_agent=user_agent,
             ip_address=ip_address,
         )
-        return TokenDTO(access_token=access_token, refresh_token=refresh_token)
+        expires_in = self.config.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        return TokenDTO(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+        )
+
+    async def refresh_session(
+        self,
+        refresh_token_raw: str,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> TokenDTO:
+        raw = refresh_token_raw.strip()
+        if not raw:
+            raise ValueError("Invalid or expired refresh token")
+        row = await self.auth_repository.get_valid_refresh_token_by_value(raw)
+        if not row:
+            raise ValueError("Invalid or expired refresh token")
+        user = await self.auth_repository.get_user_by_id(row.user_id)
+        if not user:
+            raise ValueError("Invalid or expired refresh token")
+        if not user.is_active:
+            raise ValueError("Account is inactive")
+        await self.auth_repository.revoke_refresh_token_by_id(row.id)
+        logger.info("refresh_token_rotated", user_id=user.id)
+        return await self._issue_session_tokens(user, user_agent, ip_address)
 
     async def login_with_google_code(
         self,

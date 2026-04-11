@@ -35,6 +35,21 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    expires_in: int = Field(..., description="Access token lifetime in seconds")
+
+
+class RefreshTokenRequest(BaseModel):
+    """Exchange a refresh token for a new access + refresh pair."""
+
+    refresh_token: str = Field(..., max_length=512)
+
+    @field_validator("refresh_token")
+    @classmethod
+    def strip_refresh(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("refresh_token must not be empty")
+        return s
 
 
 class UserLogin(BaseModel):
