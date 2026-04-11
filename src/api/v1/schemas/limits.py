@@ -52,6 +52,7 @@ class DetectionHistoryItem(BaseModel):
     result: str = Field(..., description="Detection result")
     confidence: float = Field(..., ge=0.0, le=1.0)
     text_preview: str = Field(..., description="First 200 characters")
+    word_count: int | None = Field(None, description="Word count of analyzed text")
     created_at: datetime
     processing_time_ms: int | None = Field(None, description="Processing time in milliseconds")
 

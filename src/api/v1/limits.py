@@ -108,6 +108,7 @@ async def get_detection_history(
     - Detection results
     - Confidence scores
     - Text previews
+    - Word count
     - File information (if applicable)
     - Processing times
     """
@@ -139,6 +140,7 @@ async def get_detection_history(
                 result=record.result,
                 confidence=record.confidence,
                 text_preview=record.text_preview[:200],
+                word_count=record.word_count,
                 created_at=record.created_at,
                 processing_time_ms=record.processing_time_ms
             )
