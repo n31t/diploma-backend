@@ -54,7 +54,7 @@ class ServiceProvider(Provider):
 
     @provide(scope=Scope.APP)
     def get_newspaper_service(self) -> NewspaperService:
-        """newspaper4k article fetcher — handles HTML parsing + boilerplate removal."""
+        """URL article extraction: httpx download + newspaper4k + BeautifulSoup fallbacks."""
         return NewspaperService()
 
     @provide(scope=Scope.APP)

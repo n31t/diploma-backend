@@ -156,6 +156,10 @@ class URLDetectionService:
                 "language_effective": language.effective,
                 "normalization": asdict(norm.metadata),
                 "quality_flags": asdict(norm.quality_flags),
+                "extraction_method": article.extraction_method,
+                "extraction_fallback_used": article.fallback_used,
+                "html_truncated": article.html_truncated,
+                "extraction_rejection_notes": article.extraction_rejection_notes,
             },
         )
 
