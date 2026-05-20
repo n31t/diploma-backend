@@ -78,10 +78,11 @@ class AIDetectionModelService:
         try:
             logger.info("analyzing_text", text_length=len(text), ml_language=language)
 
+            ml_text = text.lower() if language == "kk" else text
             response = await client.post(
                 "/api/v1/detection/",
-                json={"text": text, "language": language},
-            )
+                json={"text": ml_text, "language": language},
+                )
             response.raise_for_status()
 
             # Attempt to parse robustly — accept a few shapes and fallback safely
